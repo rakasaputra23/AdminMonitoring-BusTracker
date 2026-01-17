@@ -3,21 +3,15 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Hash;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Laravel\Sanctum\HasApiTokens;
 
-class Kru extends Model
+class Kru extends Authenticatable
 {
-    use HasFactory;
+    use HasFactory, HasApiTokens;
 
-    /**
-     * Nama tabel database
-     */
     protected $table = 'kru';
 
-    /**
-     * Field yang bisa diisi mass assignment
-     */
     protected $fillable = [
         'driver',
         'username',
@@ -25,52 +19,16 @@ class Kru extends Model
         'status',
     ];
 
-    /**
-     * Hidden attributes (tidak ditampilkan di response JSON)
-     */
     protected $hidden = [
         'password',
     ];
 
-    /**
-     * Casting tipe data
-     */
-    protected $casts = [
-        'created_at' => 'datetime',
-        'updated_at' => 'datetime',
-    ];
-
-    /**
-     * Auto hash password saat create/update
-     */
-    public function setPasswordAttribute($value)
+    public function perjalanan()
     {
-        // Hanya hash jika password tidak kosong
-        if (!empty($value)) {
-            $this->attributes['password'] = Hash::make($value);
-        }
+        return $this->hasMany(Perjalanan::class);
     }
 
-    /**
-     * Scope untuk filter kru aktif
-     */
-    public function scopeAktif($query)
-    {
-        return $query->where('status', 'aktif');
-    }
-
-    /**
-     * Scope untuk filter kru nonaktif
-     */
-    public function scopeNonaktif($query)
-    {
-        return $query->where('status', 'nonaktif');
-    }
-
-    /**
-     * Check apakah kru aktif
-     */
-    public function isAktif(): bool
+    public function isAktif()
     {
         return $this->status === 'aktif';
     }
