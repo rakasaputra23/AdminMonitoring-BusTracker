@@ -2,17 +2,21 @@
 
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\UserManagementController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
 /*
 |--------------------------------------------------------------------------
-| Root Redirect
+| Root Redirect - LANGSUNG KE LOGIN
 |--------------------------------------------------------------------------
 */
 Route::get('/', function () {
-    return redirect()->route('dashboard');
+    if (auth()->check()) {
+        return redirect()->route('dashboard');
+    }
+    return redirect()->route('login');
 });
 
 /*
@@ -59,11 +63,18 @@ Route::middleware('auth')->group(function () {
     Route::get('/laporan/pendapatan', function () {
         return Inertia::render('ComingSoon', ['feature' => 'Laporan Pendapatan']);
     })->name('laporan.pendapatan');
-    
-    // User Management (Superadmin only)
-    Route::get('/user-management', function () {
-        return Inertia::render('ComingSoon', ['feature' => 'User Management']);
-    })->name('user-management');
+});
+
+/*
+|--------------------------------------------------------------------------
+| User Management Routes (SUPERADMIN ONLY)
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'superadmin'])->group(function () {
+    Route::get('/user-management', [UserManagementController::class, 'index'])->name('user-management');
+    Route::post('/user-management', [UserManagementController::class, 'store'])->name('user-management.store');
+    Route::put('/user-management/{user}', [UserManagementController::class, 'update'])->name('user-management.update');
+    Route::delete('/user-management/{user}', [UserManagementController::class, 'destroy'])->name('user-management.destroy');
 });
 
 /*

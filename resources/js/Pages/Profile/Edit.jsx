@@ -1,5 +1,5 @@
 // resources/js/Pages/Profile/Edit.jsx
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import SimpleLayout from '@/Layouts/SimpleLayout';
 import { Head } from '@inertiajs/react';
 import UpdatePasswordForm from './Partials/UpdatePasswordForm';
 import UpdateProfileInformationForm from './Partials/UpdateProfileInformationForm';
@@ -7,28 +7,28 @@ import DeleteUserForm from './Partials/DeleteUserForm';
 
 export default function Edit({ auth, mustVerifyEmail, status }) {
     return (
-        <AuthenticatedLayout
-            user={auth.user}  // ← INI YANG KURANG!
-            header={
-                <h2 className="text-xl font-semibold leading-tight text-gray-800">
-                    Profile
-                </h2>
-            }
-        >
+        <SimpleLayout user={auth.user} pageTitle="Profile Settings">
             <Head title="Profile" />
 
-            <div className="py-12">
-                <div className="mx-auto max-w-7xl space-y-6 sm:px-6 lg:px-8">
-                    <UpdateProfileInformationForm
-                        mustVerifyEmail={mustVerifyEmail}
-                        status={status}
-                    />
-
-                    <UpdatePasswordForm />
-
-                    <DeleteUserForm />
-                </div>
+            {/* Header Section */}
+            <div className="mb-6">
+                <h1 className="text-2xl font-bold text-gray-900">Profile Settings</h1>
+                <p className="text-sm text-gray-600 mt-1">
+                    Kelola informasi profil dan keamanan akun Anda
+                </p>
             </div>
-        </AuthenticatedLayout>
+
+            {/* Content */}
+            <div className="space-y-6">
+                <UpdateProfileInformationForm
+                    mustVerifyEmail={mustVerifyEmail}
+                    status={status}
+                />
+
+                <UpdatePasswordForm />
+
+                <DeleteUserForm />
+            </div>
+        </SimpleLayout>
     );
 }

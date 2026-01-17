@@ -1,11 +1,6 @@
 // resources/js/Pages/Profile/Partials/UpdatePasswordForm.jsx
 import { useForm } from '@inertiajs/react';
 import { useRef } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/Components/ui/Card';
-import { Input } from '@/Components/ui/Input';
-import { Label } from '@/Components/ui/Label';
-import { Button } from '@/Components/ui/Button';
-import { Badge } from '@/Components/ui/Badge';
 
 export default function UpdatePasswordForm({ className = '' }) {
     const passwordInput = useRef();
@@ -38,70 +33,93 @@ export default function UpdatePasswordForm({ className = '' }) {
     };
 
     return (
-        <Card className={className}>
-            <CardHeader>
-                <CardTitle>Update Password</CardTitle>
-                <CardDescription>
-                    Ensure your account is using a long, random password to stay secure.
-                </CardDescription>
-            </CardHeader>
-            <CardContent>
-                <form onSubmit={updatePassword} className="space-y-6">
+        <div className={`bg-white rounded-lg border border-gray-200 ${className}`}>
+            <div className="px-6 py-4 border-b border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900">Update Password</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                    Pastikan akun Anda menggunakan password yang kuat dan aman
+                </p>
+            </div>
+
+            <div className="p-6">
+                <div className="space-y-6">
+                    {/* Current Password */}
                     <div className="space-y-2">
-                        <Label htmlFor="current_password">Current Password</Label>
-                        <Input
+                        <label htmlFor="current_password" className="block text-sm font-medium text-gray-700">
+                            Password Saat Ini
+                        </label>
+                        <input
                             id="current_password"
                             ref={currentPasswordInput}
+                            type="password"
                             value={data.current_password}
                             onChange={(e) => setData('current_password', e.target.value)}
-                            type="password"
                             autoComplete="current-password"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                         {errors.current_password && (
                             <p className="text-sm text-red-600">{errors.current_password}</p>
                         )}
                     </div>
 
+                    {/* New Password */}
                     <div className="space-y-2">
-                        <Label htmlFor="password">New Password</Label>
-                        <Input
+                        <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                            Password Baru
+                        </label>
+                        <input
                             id="password"
                             ref={passwordInput}
+                            type="password"
                             value={data.password}
                             onChange={(e) => setData('password', e.target.value)}
-                            type="password"
                             autoComplete="new-password"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                         {errors.password && (
                             <p className="text-sm text-red-600">{errors.password}</p>
                         )}
                     </div>
 
+                    {/* Confirm Password */}
                     <div className="space-y-2">
-                        <Label htmlFor="password_confirmation">Confirm Password</Label>
-                        <Input
+                        <label htmlFor="password_confirmation" className="block text-sm font-medium text-gray-700">
+                            Konfirmasi Password Baru
+                        </label>
+                        <input
                             id="password_confirmation"
+                            type="password"
                             value={data.password_confirmation}
                             onChange={(e) => setData('password_confirmation', e.target.value)}
-                            type="password"
                             autoComplete="new-password"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                         {errors.password_confirmation && (
                             <p className="text-sm text-red-600">{errors.password_confirmation}</p>
                         )}
                     </div>
 
+                    {/* Submit Button */}
                     <div className="flex items-center gap-4">
-                        <Button type="submit" disabled={processing}>
-                            Save
-                        </Button>
+                        <button
+                            onClick={updatePassword}
+                            disabled={processing}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {processing ? 'Menyimpan...' : 'Update Password'}
+                        </button>
 
                         {recentlySuccessful && (
-                            <Badge variant="success">Password updated!</Badge>
+                            <div className="flex items-center gap-2 text-green-600">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                                <span className="text-sm font-medium">Password berhasil diupdate!</span>
+                            </div>
                         )}
                     </div>
-                </form>
-            </CardContent>
-        </Card>
+                </div>
+            </div>
+        </div>
     );
 }

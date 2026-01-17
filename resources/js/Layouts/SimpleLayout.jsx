@@ -2,11 +2,14 @@ import React, { useState } from 'react';
 import { Link, router, usePage } from '@inertiajs/react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 
-export default function SimpleLayout({ children, pageTitle = "Dashboard", userRole = "superadmin", user = null }) {
+export default function SimpleLayout({ children, pageTitle = "Dashboard", user = null }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dataMasterOpen, setDataMasterOpen] = useState(true);
   const [laporanOpen, setLaporanOpen] = useState(true);
-  const { url } = usePage();
+  const { url, props } = usePage();
+  
+  // ✅ Ambil userRole dari props.auth.user.role
+  const userRole = props.auth?.user?.role || user?.role || 'admin';
 
   const handleLogout = () => {
     router.post('/logout');
@@ -19,27 +22,29 @@ export default function SimpleLayout({ children, pageTitle = "Dashboard", userRo
   // Fungsi untuk mendapatkan breadcrumb
   const getBreadcrumb = () => {
     if (url === '/dashboard') {
-      return [{ label: 'Dashboard', href: '/dashboard' }];
+        return [{ label: 'Dashboard', href: '/dashboard' }];
     }
     
     const breadcrumbs = [{ label: 'Dashboard', href: '/dashboard' }];
     
     if (url.startsWith('/data-master/')) {
-      breadcrumbs.push({ label: 'Data Master', href: '#' });
-      if (url.includes('/armada')) breadcrumbs.push({ label: 'Data Armada', href: '/data-master/armada' });
-      if (url.includes('/rute')) breadcrumbs.push({ label: 'Data Rute', href: '/data-master/rute' });
-      if (url.includes('/tarif')) breadcrumbs.push({ label: 'Data Tarif', href: '/data-master/tarif' });
-      if (url.includes('/kru')) breadcrumbs.push({ label: 'Data Kru', href: '/data-master/kru' });
+        breadcrumbs.push({ label: 'Data Master', href: '#' });
+        if (url.includes('/armada')) breadcrumbs.push({ label: 'Data Armada', href: '/data-master/armada' });
+        if (url.includes('/rute')) breadcrumbs.push({ label: 'Data Rute', href: '/data-master/rute' });
+        if (url.includes('/tarif')) breadcrumbs.push({ label: 'Data Tarif', href: '/data-master/tarif' });
+        if (url.includes('/kru')) breadcrumbs.push({ label: 'Data Kru', href: '/data-master/kru' });
     } else if (url.startsWith('/laporan/')) {
-      breadcrumbs.push({ label: 'Laporan', href: '#' });
-      if (url.includes('/riwayat')) breadcrumbs.push({ label: 'Riwayat Perjalanan', href: '/laporan/riwayat' });
-      if (url.includes('/pendapatan')) breadcrumbs.push({ label: 'Laporan Pendapatan', href: '/laporan/pendapatan' });
+        breadcrumbs.push({ label: 'Laporan', href: '#' });
+        if (url.includes('/riwayat')) breadcrumbs.push({ label: 'Riwayat Perjalanan', href: '/laporan/riwayat' });
+        if (url.includes('/pendapatan')) breadcrumbs.push({ label: 'Laporan Pendapatan', href: '/laporan/pendapatan' });
     } else if (url.startsWith('/user-management')) {
-      breadcrumbs.push({ label: 'User Management', href: '/user-management' });
+        breadcrumbs.push({ label: 'User Management', href: '/user-management' });
+    } else if (url.startsWith('/profile')) {
+        breadcrumbs.push({ label: 'Profile Settings', href: '/profile' });
     }
     
     return breadcrumbs;
-  };
+    };
 
   const breadcrumbs = getBreadcrumb();
 
@@ -71,8 +76,6 @@ export default function SimpleLayout({ children, pageTitle = "Dashboard", userRo
         {/* Sidebar Content - SCROLLABLE */}
         <div className="flex-1 overflow-y-auto py-3 px-3">
           
-          {/* --- BAGIAN TOMBOL LAMA DIHAPUS DARI SINI --- */}
-
           {/* Platform / Menu Utama */}
           <div className="mb-4">
             {!sidebarCollapsed && (
@@ -355,7 +358,7 @@ export default function SimpleLayout({ children, pageTitle = "Dashboard", userRo
             </button>
 
             {/* Dropdown Menu */}
-            <div className={`absolute bottom-full ${sidebarCollapsed ? 'left-full ml-2' : 'left-0 right-0'} mb-2 bg-white border border-gray-200 rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all ${sidebarCollapsed ? 'w-48' : ''}`}>
+            <div className={`absolute bottom-full ${sidebarCollapsed ? 'left-full ml-2' : 'left-0 right-0'} mb-2 bg-white border border-gray-200 rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all ${sidebarCollapsed ? 'w-48' : ''} z-50`}>
               <Link 
                 href="/profile" 
                 className="flex items-center gap-2 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 rounded-t-lg whitespace-nowrap"
@@ -384,10 +387,9 @@ export default function SimpleLayout({ children, pageTitle = "Dashboard", userRo
         {/* Header */}
         <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 flex-shrink-0">
           
-          {/* --- BAGIAN HEADER DIUBAH DI SINI --- */}
           <div className="flex items-center gap-4">
             
-            {/* 1. Tombol Collapse Baru */}
+            {/* 1. Tombol Collapse */}
             <button
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
               className="text-gray-500 hover:text-gray-700 transition-colors"
@@ -401,7 +403,7 @@ export default function SimpleLayout({ children, pageTitle = "Dashboard", userRo
             {/* 2. Garis Pemisah Vertikal */}
             <div className="h-5 w-px bg-gray-300"></div>
 
-            {/* 3. Breadcrumbs (Posisi tetap) */}
+            {/* 3. Breadcrumbs */}
             <div className="flex items-center gap-2 text-sm">
               {breadcrumbs.map((crumb, index) => (
                 <React.Fragment key={index}>
@@ -430,7 +432,7 @@ export default function SimpleLayout({ children, pageTitle = "Dashboard", userRo
           </div>
         </header>
 
-        {/* Content */}
+        {/* Content Body */}
         <main className="flex-1 overflow-y-auto bg-white p-6">
           {children}
         </main>

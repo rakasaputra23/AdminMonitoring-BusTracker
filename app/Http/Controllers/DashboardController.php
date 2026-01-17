@@ -29,6 +29,10 @@ class DashboardController extends Controller
                 'stats' => $stats,
                 'buses' => $buses,
                 'googleMapsApiKey' => env('GOOGLE_MAPS_API_KEY'),
+                // ✅ FIX: Pass user object dengan role
+                'auth' => [
+                    'user' => auth()->user()
+                ],
             ]);
         } catch (\Exception $e) {
             return Inertia::render('Dashboard', [
@@ -41,6 +45,10 @@ class DashboardController extends Controller
                 ],
                 'buses' => [],
                 'googleMapsApiKey' => env('GOOGLE_MAPS_API_KEY'),
+                // ✅ FIX: Pass user object dengan role
+                'auth' => [
+                    'user' => auth()->user()
+                ],
                 'error' => 'Firebase connection error: ' . $e->getMessage()
             ]);
         }
