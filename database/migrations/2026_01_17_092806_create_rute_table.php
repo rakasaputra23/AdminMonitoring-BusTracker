@@ -13,9 +13,10 @@ return new class extends Migration
     {
         Schema::create('rute', function (Blueprint $table) {
             $table->id();
-            $table->string('nama_rute'); // Auto-generated: "Kota Asal - Kota Tujuan"
+            $table->string('nama_rute'); // Input manual oleh user
             $table->string('kota_asal'); // Kota asal
             $table->string('kota_tujuan'); // Kota tujuan
+            $table->json('waypoints')->nullable(); // Titik waypoint untuk customize rute
             $table->text('polyline'); // Encoded polyline dari Google Maps
             $table->json('track_coordinates')->nullable(); // Array koordinat [{"lat": -7.6, "lng": 111.5}, ...]
             $table->decimal('jarak', 8, 2)->nullable(); // Jarak dalam km

@@ -12,6 +12,7 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             KruSeeder::class,
             ArmadaSeeder::class,
+            RuteSeeder::class,
         ]);
     }
 }

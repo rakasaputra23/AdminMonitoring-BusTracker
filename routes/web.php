@@ -4,7 +4,8 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\KruController;
-use App\Http\Controllers\ArmadaController; // TAMBAHKAN INI
+use App\Http\Controllers\ArmadaController;
+use App\Http\Controllers\RuteController; // TAMBAHKAN INI
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -47,9 +48,11 @@ Route::middleware('auth')->group(function () {
     Route::put('/data-master/armada/{armada}', [ArmadaController::class, 'update'])->name('data-master.armada.update');
     Route::delete('/data-master/armada/{armada}', [ArmadaController::class, 'destroy'])->name('data-master.armada.destroy');
     
-    Route::get('/data-master/rute', function () {
-        return Inertia::render('ComingSoon', ['feature' => 'Data Rute']);
-    })->name('data-master.rute');
+    // ✅ ROUTE RUTE - CRUD
+    Route::get('/data-master/rute', [RuteController::class, 'index'])->name('data-master.rute');
+    Route::post('/data-master/rute', [RuteController::class, 'store'])->name('data-master.rute.store');
+    Route::put('/data-master/rute/{rute}', [RuteController::class, 'update'])->name('data-master.rute.update');
+    Route::delete('/data-master/rute/{rute}', [RuteController::class, 'destroy'])->name('data-master.rute.destroy');
     
     Route::get('/data-master/tarif', function () {
         return Inertia::render('ComingSoon', ['feature' => 'Data Tarif']);
