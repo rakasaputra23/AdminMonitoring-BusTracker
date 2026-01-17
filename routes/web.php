@@ -3,7 +3,8 @@
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\UserManagementController;
-use App\Http\Controllers\KruController; // TAMBAHKAN INI
+use App\Http\Controllers\KruController;
+use App\Http\Controllers\ArmadaController; // TAMBAHKAN INI
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -40,9 +41,11 @@ Route::middleware('auth')->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
     
     // Data Master Routes
-    Route::get('/data-master/armada', function () {
-        return Inertia::render('ComingSoon', ['feature' => 'Data Armada']);
-    })->name('data-master.armada');
+    // ✅ ROUTE ARMADA - CRUD
+    Route::get('/data-master/armada', [ArmadaController::class, 'index'])->name('data-master.armada');
+    Route::post('/data-master/armada', [ArmadaController::class, 'store'])->name('data-master.armada.store');
+    Route::put('/data-master/armada/{armada}', [ArmadaController::class, 'update'])->name('data-master.armada.update');
+    Route::delete('/data-master/armada/{armada}', [ArmadaController::class, 'destroy'])->name('data-master.armada.destroy');
     
     Route::get('/data-master/rute', function () {
         return Inertia::render('ComingSoon', ['feature' => 'Data Rute']);
