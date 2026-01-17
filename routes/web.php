@@ -3,6 +3,7 @@
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\UserManagementController;
+use App\Http\Controllers\KruController; // TAMBAHKAN INI
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -38,7 +39,7 @@ Route::middleware('auth')->group(function () {
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
     
-    // Data Master Routes (Placeholder - Coming Soon)
+    // Data Master Routes
     Route::get('/data-master/armada', function () {
         return Inertia::render('ComingSoon', ['feature' => 'Data Armada']);
     })->name('data-master.armada');
@@ -51,9 +52,11 @@ Route::middleware('auth')->group(function () {
         return Inertia::render('ComingSoon', ['feature' => 'Data Tarif']);
     })->name('data-master.tarif');
     
-    Route::get('/data-master/kru', function () {
-        return Inertia::render('ComingSoon', ['feature' => 'Data Kru']);
-    })->name('data-master.kru');
+    // ✅ ROUTE KRU - GANTI COMING SOON JADI CRUD
+    Route::get('/data-master/kru', [KruController::class, 'index'])->name('data-master.kru');
+    Route::post('/data-master/kru', [KruController::class, 'store'])->name('data-master.kru.store');
+    Route::put('/data-master/kru/{kru}', [KruController::class, 'update'])->name('data-master.kru.update');
+    Route::delete('/data-master/kru/{kru}', [KruController::class, 'destroy'])->name('data-master.kru.destroy');
     
     // Laporan Routes (Placeholder)
     Route::get('/laporan/riwayat', function () {
