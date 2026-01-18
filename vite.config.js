@@ -16,4 +16,18 @@ export default defineConfig({
             '@': path.resolve(__dirname, './resources/js'),
         },
     },
+    server: {
+        host: true, // Listen on all addresses
+        port: 5173,
+        strictPort: true,
+        cors: {
+            origin: '*',
+            credentials: true,
+        },
+        hmr: {
+            protocol: 'ws',
+            host: '192.168.1.10',
+            port: 5173,
+        },
+    },
 });
