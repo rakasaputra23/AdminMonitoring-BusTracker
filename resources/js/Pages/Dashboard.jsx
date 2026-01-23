@@ -5,7 +5,8 @@ import { Badge } from '@/Components/ui/Badge';
 import { Button } from '@/Components/ui/Button';
 import { Separator } from '@/Components/ui/Separator';
 import { ScrollArea } from '@/Components/ui/ScrollArea';
-import { X, MapPin, Users, Gauge, User, Clock, Navigation, Loader2 } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/Components/ui/Alert';
+import { X, MapPin, Users, Gauge, User, Clock, Navigation, Loader2, AlertCircle, TrendingUp, Route as RouteIcon } from 'lucide-react';
 
 export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error }) {
     const mapRef = useRef(null);
@@ -14,14 +15,14 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
     const infoWindowsRef = useRef({});
     const trailLinesRef = useRef({});
     const routePolylineRef = useRef(null);
-    const lastKnownPositionsRef = useRef({});
-    const allBusesDataRef = useRef({}); // Simpan semua data bus yang pernah ada
+    const selectedCircleRef = useRef(null);
     
     const [currentStats, setCurrentStats] = useState(stats);
     const [currentBuses, setCurrentBuses] = useState(buses || {});
     const [selectedBus, setSelectedBus] = useState(null);
     const [mapLoaded, setMapLoaded] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [lastRefreshTime, setLastRefreshTime] = useState(new Date());
 
     // Load Google Maps Script
     useEffect(() => {
@@ -63,19 +64,51 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
 
             const center = { lat: -7.6298, lng: 111.5239 };
 
-            // Clean Default Style - Hijau Biru Natural
+            // Map Style seperti APK - Light & Soft
             const mapStyles = [
-                // Hide POI (tidak perlu tempat wisata, restoran, dll)
+                {
+                    featureType: "all",
+                    elementType: "geometry",
+                    stylers: [{ color: "#f5f5f5" }]
+                },
+                {
+                    featureType: "water",
+                    elementType: "geometry",
+                    stylers: [{ color: "#c9e9f6" }]
+                },
+                {
+                    featureType: "water",
+                    elementType: "labels.text.fill",
+                    stylers: [{ color: "#9e9e9e" }]
+                },
+                {
+                    featureType: "road",
+                    elementType: "geometry",
+                    stylers: [{ color: "#ffffff" }]
+                },
+                {
+                    featureType: "road",
+                    elementType: "geometry.stroke",
+                    stylers: [{ color: "#d9d9d9" }]
+                },
+                {
+                    featureType: "road.highway",
+                    elementType: "geometry",
+                    stylers: [{ color: "#fef5e0" }]
+                },
+                {
+                    featureType: "road.highway",
+                    elementType: "geometry.stroke",
+                    stylers: [{ color: "#f5d89f" }]
+                },
                 {
                     featureType: "poi",
                     stylers: [{ visibility: "off" }]
                 },
-                // Hide transit (bus stop, train station icons)
                 {
                     featureType: "transit",
                     stylers: [{ visibility: "off" }]
                 },
-                // Hide administrative labels yang terlalu banyak
                 {
                     featureType: "administrative.land_parcel",
                     stylers: [{ visibility: "off" }]
@@ -83,42 +116,39 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                 {
                     featureType: "administrative.neighborhood",
                     stylers: [{ visibility: "off" }]
+                },
+                {
+                    featureType: "landscape.man_made",
+                    elementType: "geometry.fill",
+                    stylers: [{ color: "#f0f0f0" }]
+                },
+                {
+                    featureType: "landscape.natural",
+                    elementType: "geometry.fill",
+                    stylers: [{ color: "#e8f5e9" }]
                 }
-                // Biarkan warna default Google Maps (hijau, biru, dll)
             ];
 
             const map = new google.maps.Map(mapRef.current, {
                 zoom: 12,
                 center: center,
-                
-                // 100% CLEAN - NO CONTROLS AT ALL
                 disableDefaultUI: true,
-                
-                // Disable EVERYTHING
                 zoomControl: false,
                 mapTypeControl: false,
                 streetViewControl: false,
                 fullscreenControl: false,
                 scaleControl: false,
                 rotateControl: false,
-                
-                // Smooth interaction (scroll to zoom)
                 gestureHandling: 'greedy',
-                
-                // Clean styles (default colors, cuma hide POI & transit)
                 styles: mapStyles,
-                
-                // Disable clickable POI
                 clickableIcons: false
             });
 
             mapInstanceRef.current = map;
             setMapLoaded(true);
 
-            console.log('✅ 100% clean map initialized');
+            console.log('✅ Map initialized with APK style');
             
-            // Simpan data awal
-            allBusesDataRef.current = { ...buses };
             updateBusMarkers(buses);
 
         } catch (err) {
@@ -129,7 +159,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
     // Start real-time updates setiap 5 detik
     useEffect(() => {
         const interval = setInterval(() => {
-            fetchLatestData(true); // silent update
+            fetchLatestData(true);
         }, 5000);
         return () => clearInterval(interval);
     }, []);
@@ -140,10 +170,15 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
             const updatedBus = currentBuses[selectedBus.id];
             const isOnline = hasValidGPS(updatedBus);
             setSelectedBus({ id: selectedBus.id, ...updatedBus, isOnline });
+        } else if (selectedBus && !currentBuses[selectedBus.id]) {
+            // Bus sudah tidak ada di data, tutup detail panel
+            setSelectedBus(null);
+            clearPolylines();
+            closeAllInfoWindows();
         }
     }, [currentBuses]);
 
-    // Fetch latest data
+    // Fetch latest data dengan enhanced refresh
     const fetchLatestData = async (silent = false) => {
         if (!silent) setIsRefreshing(true);
 
@@ -161,14 +196,18 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
             }
 
             if (busesData.success) {
-                // Gabungkan data baru dengan data lama (jangan hilangkan bus yang offline)
-                const mergedBuses = { ...allBusesDataRef.current, ...busesData.data };
-                allBusesDataRef.current = mergedBuses;
+                // ✅ ENHANCED: Replace semua data, bukan merge
+                const newBusesData = busesData.data || {};
                 
-                setCurrentBuses(mergedBuses);
+                setCurrentBuses(newBusesData);
+                
                 if (mapLoaded) {
-                    updateBusMarkers(mergedBuses);
+                    // ✅ ENHANCED: Hapus marker yang sudah tidak ada di data baru
+                    removeObsoleteMarkers(newBusesData);
+                    updateBusMarkers(newBusesData);
                 }
+                
+                setLastRefreshTime(new Date());
             }
         } catch (err) {
             console.error('Error fetching data:', err);
@@ -179,36 +218,63 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
         }
     };
 
-    // Calculate bearing
-    const calculateBearing = (start, end) => {
-        const startLat = start.lat * Math.PI / 180;
-        const startLng = start.lng * Math.PI / 180;
-        const endLat = end.lat * Math.PI / 180;
-        const endLng = end.lng * Math.PI / 180;
-
-        const dLng = endLng - startLng;
-        const y = Math.sin(dLng) * Math.cos(endLat);
-        const x = Math.cos(startLat) * Math.sin(endLat) -
-                  Math.sin(startLat) * Math.cos(endLat) * Math.cos(dLng);
+    // ✅ NEW: Remove markers yang sudah tidak ada di data baru
+    const removeObsoleteMarkers = (newBusesData) => {
+        const newBusIds = Object.keys(newBusesData);
+        const currentBusIds = Object.keys(markersRef.current);
         
-        let bearing = Math.atan2(y, x) * 180 / Math.PI;
-        return (bearing + 360) % 360;
+        currentBusIds.forEach(busId => {
+            if (!newBusIds.includes(busId)) {
+                // Hapus marker
+                if (markersRef.current[busId]) {
+                    markersRef.current[busId].setMap(null);
+                    delete markersRef.current[busId];
+                }
+                
+                // Hapus info window
+                if (infoWindowsRef.current[busId]) {
+                    infoWindowsRef.current[busId].close();
+                    delete infoWindowsRef.current[busId];
+                }
+                
+                // Hapus trail line
+                if (trailLinesRef.current[busId]) {
+                    trailLinesRef.current[busId].setMap(null);
+                    delete trailLinesRef.current[busId];
+                }
+                
+                console.log('🗑️ Removed obsolete marker:', busId);
+            }
+        });
     };
 
-    // Create 3D bus icon (top view - memanjang)
-    const createBusIcon = (isOnline, rotation = 0) => {
-        // Bus 3D view dari atas - persegi panjang memanjang
-        const busPath = 'M10,2 L14,2 L14,1 L10,1 Z M9,2 L9,22 L10,22 L10,2 Z M14,2 L14,22 L15,22 L15,2 Z M10,2 L14,2 L14,22 L10,22 Z M10,5 L14,5 M10,8 L14,8 M10,11 L14,11 M10,14 L14,14 M10,17 L14,17 M10,20 L14,20';
+    // Create bus icon (seperti APK - bulat putih dengan bus biru)
+    const createBusIcon = (isOnline) => {
+        const color = isOnline ? '#3B82F6' : '#9CA3AF';
         
+        const svg = `
+            <svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="20" cy="22" r="18" fill="#000000" opacity="0.15"/>
+                <circle cx="20" cy="20" r="18" fill="white" stroke="#E5E7EB" stroke-width="1"/>
+                <g transform="translate(20, 20)">
+                    <rect x="-7" y="-8" width="14" height="16" rx="2" fill="${color}" opacity="0.2"/>
+                    <rect x="-7" y="-8" width="14" height="16" rx="2" fill="none" stroke="${color}" stroke-width="1.5"/>
+                    <rect x="-6" y="-6" width="5" height="4" rx="0.5" fill="${color}" opacity="0.3"/>
+                    <rect x="1" y="-6" width="5" height="4" rx="0.5" fill="${color}" opacity="0.3"/>
+                    <line x1="-7" y1="-1" x2="7" y2="-1" stroke="${color}" stroke-width="1"/>
+                    <line x1="-7" y1="3" x2="7" y2="3" stroke="${color}" stroke-width="1"/>
+                    <circle cx="-4" cy="8" r="2" fill="${color}"/>
+                    <circle cx="4" cy="8" r="2" fill="${color}"/>
+                    <circle cx="-4" cy="8" r="1" fill="white"/>
+                    <circle cx="4" cy="8" r="1" fill="white"/>
+                </g>
+            </svg>
+        `;
+
         return {
-            path: busPath,
-            fillColor: isOnline ? '#2563EB' : '#9CA3AF',
-            fillOpacity: isOnline ? 1 : 0.6,
-            strokeWeight: 2,
-            strokeColor: '#ffffff',
-            scale: 1.2,
-            anchor: new google.maps.Point(12, 12),
-            rotation: rotation
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+            scaledSize: new google.maps.Size(40, 40),
+            anchor: new google.maps.Point(20, 20)
         };
     };
 
@@ -248,93 +314,92 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
 
     // Update bus markers
     const updateBusMarkers = (busesData) => {
-        if (!mapInstanceRef.current || !busesData || !window.google) return;
+        if (!mapInstanceRef.current || !busesData || !window.google) {
+            console.log('⏸️ Waiting for map to load...');
+            return;
+        }
 
         Object.entries(busesData).forEach(([busId, bus]) => {
             const isOnline = hasValidGPS(bus);
             
-            let position;
-            if (isOnline) {
-                position = {
-                    lat: parseFloat(bus.location.latitude),
-                    lng: parseFloat(bus.location.longitude)
-                };
-                lastKnownPositionsRef.current[busId] = position;
-            } else {
-                position = lastKnownPositionsRef.current[busId];
-                if (!position) {
-                    console.log(`Bus ${busId} offline - no last known position`);
-                    return;
+            if (!isOnline) {
+                // ✅ ENHANCED: Jika tidak ada GPS valid, skip marker creation
+                // Hapus marker jika ada
+                if (markersRef.current[busId]) {
+                    markersRef.current[busId].setMap(null);
+                    delete markersRef.current[busId];
                 }
+                return;
             }
 
-            let rotation = 0;
-            if (bus.track && bus.track.length >= 2) {
-                const lastTwo = bus.track.slice(-2);
-                const start = { lat: lastTwo[0].lat, lng: lastTwo[0].lng };
-                const end = { lat: lastTwo[1].lat, lng: lastTwo[1].lng };
-                rotation = calculateBearing(start, end);
-            }
+            const position = {
+                lat: parseFloat(bus.location.latitude),
+                lng: parseFloat(bus.location.longitude)
+            };
 
-            const markerIcon = createBusIcon(isOnline, rotation);
+            try {
+                const markerIcon = createBusIcon(isOnline);
 
-            if (markersRef.current[busId]) {
-                const marker = markersRef.current[busId];
-                const oldPos = marker.getPosition();
-                
-                if (isOnline) {
-                    animateMarker(marker, oldPos, position, 1000);
+                if (markersRef.current[busId]) {
+                    const marker = markersRef.current[busId];
+                    const oldPos = marker.getPosition();
+                    
+                    if (oldPos) {
+                        animateMarker(marker, oldPos, position, 1000);
+                    }
+                    marker.setIcon(markerIcon);
+                    
+                    if (infoWindowsRef.current[busId]) {
+                        infoWindowsRef.current[busId].setContent(createInfoWindowContent(busId, bus));
+                    }
+                } else {
+                    const marker = new google.maps.Marker({
+                        position: position,
+                        map: mapInstanceRef.current,
+                        icon: markerIcon,
+                        title: bus.namaBus || bus.plateNumber || busId,
+                        animation: google.maps.Animation.DROP,
+                        optimized: false
+                    });
+
+                    const infoWindow = new google.maps.InfoWindow({
+                        content: createInfoWindowContent(busId, bus)
+                    });
+
+                    marker.addListener('click', () => {
+                        closeAllInfoWindows();
+                        infoWindow.open(mapInstanceRef.current, marker);
+                        showBusDetails(busId, bus, isOnline, position);
+                    });
+
+                    markersRef.current[busId] = marker;
+                    infoWindowsRef.current[busId] = infoWindow;
                 }
-                marker.setIcon(markerIcon);
-                
-                // Update info window content real-time
-                if (infoWindowsRef.current[busId]) {
-                    infoWindowsRef.current[busId].setContent(createInfoWindowContent(busId, bus));
-                }
-            } else {
-                const marker = new google.maps.Marker({
-                    position: position,
-                    map: mapInstanceRef.current,
-                    icon: markerIcon,
-                    title: bus.plateNumber || busId,
-                    animation: google.maps.Animation.DROP
-                });
-
-                const infoWindow = new google.maps.InfoWindow({
-                    content: createInfoWindowContent(busId, bus)
-                });
-
-                marker.addListener('click', () => {
-                    closeAllInfoWindows();
-                    infoWindow.open(mapInstanceRef.current, marker);
-                    showBusDetails(busId, bus, isOnline);
-                });
-
-                markersRef.current[busId] = marker;
-                infoWindowsRef.current[busId] = infoWindow;
+            } catch (error) {
+                console.error(`Error creating marker for bus ${busId}:`, error);
             }
         });
 
         console.log('✅ Updated', Object.keys(markersRef.current).length, 'markers');
     };
 
-    // Create compact info window (Popup 1)
+    // Create compact info window dengan namaBus
     const createInfoWindowContent = (busId, bus) => {
         const occupancy = bus.currentPassengers || 0;
         const capacity = bus.capacity || 0;
         const percentage = capacity > 0 ? Math.round((occupancy / capacity) * 100) : 0;
 
         return `
-            <div style="padding: 12px; min-width: 200px; font-family: system-ui;">
+            <div style="padding: 12px; min-width: 220px; font-family: system-ui;">
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
-                    <div style="background: #2563EB; padding: 6px; border-radius: 6px;">
+                    <div style="background: #3B82F6; padding: 6px; border-radius: 6px;">
                         <svg width="20" height="20" fill="white" viewBox="0 0 24 24">
                             <path d="M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z"/>
                         </svg>
                     </div>
-                    <div>
-                        <h4 style="margin: 0; font-size: 15px; font-weight: bold; color: #1F2937;">${bus.plateNumber || busId}</h4>
-                        <p style="margin: 2px 0 0 0; font-size: 11px; color: #6B7280;">${bus.class || 'N/A'}</p>
+                    <div style="flex: 1; min-width: 0;">
+                        <h4 style="margin: 0; font-size: 15px; font-weight: bold; color: #1F2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${bus.namaBus || bus.plateNumber || busId}</h4>
+                        <p style="margin: 2px 0 0 0; font-size: 11px; color: #6B7280;">${bus.plateNumber || 'N/A'} • ${bus.class || 'N/A'}</p>
                     </div>
                 </div>
                 <div style="font-size: 12px; color: #4B5563; line-height: 1.6;">
@@ -344,47 +409,57 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                     <div style="margin-bottom: 6px;">
                         <strong>Penumpang:</strong> ${occupancy}/${capacity} (${percentage}%)
                     </div>
-                    <div>
+                    <div style="margin-bottom: 6px;">
                         <strong>Kecepatan:</strong> ${bus.location?.speed?.toFixed(1) || 0} km/jam
+                    </div>
+                    <div>
+                        <strong>Total Jarak:</strong> ${bus.totalDistance?.toFixed(2) || 0} km
                     </div>
                 </div>
             </div>
         `;
     };
 
-    // Show bus details (Popup 2 + Polylines)
-    const showBusDetails = (busId, bus, isOnline) => {
+    // Show bus details dengan gradient circle
+    const showBusDetails = (busId, bus, isOnline, position) => {
         setSelectedBus({ id: busId, ...bus, isOnline });
 
         clearPolylines();
 
-        // Draw route polyline
+        // Tambahkan gradient circle di sekitar bus (seperti APK)
+        if (selectedCircleRef.current) {
+            selectedCircleRef.current.setMap(null);
+        }
+
+        selectedCircleRef.current = new google.maps.Circle({
+            strokeColor: '#3B82F6',
+            strokeOpacity: 0.3,
+            strokeWeight: 2,
+            fillColor: '#3B82F6',
+            fillOpacity: 0.1,
+            map: mapInstanceRef.current,
+            center: position,
+            radius: 300
+        });
+
+        // Draw route polyline (BIRU - seperti APK)
         if (bus.routePolyline) {
             try {
                 const path = google.maps.geometry.encoding.decodePath(bus.routePolyline);
                 routePolylineRef.current = new google.maps.Polyline({
                     path: path,
                     geodesic: true,
-                    strokeColor: '#F97316',
+                    strokeColor: '#3B82F6',
                     strokeOpacity: 0.7,
-                    strokeWeight: 4,
-                    map: mapInstanceRef.current,
-                    icons: [{
-                        icon: {
-                            path: 'M 0,-1 0,1',
-                            strokeOpacity: 1,
-                            scale: 3
-                        },
-                        offset: '0',
-                        repeat: '20px'
-                    }]
+                    strokeWeight: 5,
+                    map: mapInstanceRef.current
                 });
             } catch (e) {
                 console.error('Error drawing route polyline:', e);
             }
         }
 
-        // Draw track polyline
+        // Draw track polyline (HIJAU - seperti APK)
         if (bus.track && bus.track.length > 1) {
             const trailPath = bus.track.map(t => ({ lat: t.lat, lng: t.lng }));
             
@@ -392,27 +467,14 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                 path: trailPath,
                 geodesic: true,
                 strokeColor: '#10B981',
-                strokeOpacity: 0.8,
-                strokeWeight: 3,
+                strokeOpacity: 0.9,
+                strokeWeight: 5,
                 map: mapInstanceRef.current
             });
         }
 
-        // Zoom ke posisi bus (BUKAN ke route)
-        let busPosition;
-        if (isOnline) {
-            busPosition = {
-                lat: parseFloat(bus.location.latitude),
-                lng: parseFloat(bus.location.longitude)
-            };
-        } else {
-            busPosition = lastKnownPositionsRef.current[busId];
-        }
-
-        if (busPosition) {
-            mapInstanceRef.current.setCenter(busPosition);
-            mapInstanceRef.current.setZoom(15); // Zoom ke bus
-        }
+        mapInstanceRef.current.setCenter(position);
+        mapInstanceRef.current.setZoom(15);
     };
 
     // Clear all polylines
@@ -425,6 +487,11 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
             line.setMap(null);
         });
         trailLinesRef.current = {};
+        
+        if (selectedCircleRef.current) {
+            selectedCircleRef.current.setMap(null);
+            selectedCircleRef.current = null;
+        }
     };
 
     // Close all info windows
@@ -445,17 +512,13 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
         if (!bus) return;
 
         const isOnline = hasValidGPS(bus);
-        let position;
+        
+        if (!isOnline) return;
 
-        if (isOnline) {
-            position = {
-                lat: parseFloat(bus.location.latitude),
-                lng: parseFloat(bus.location.longitude)
-            };
-        } else {
-            position = lastKnownPositionsRef.current[busId];
-            if (!position) return;
-        }
+        const position = {
+            lat: parseFloat(bus.location.latitude),
+            lng: parseFloat(bus.location.longitude)
+        };
 
         mapInstanceRef.current.setCenter(position);
         mapInstanceRef.current.setZoom(15);
@@ -478,6 +541,43 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
         return `${Math.floor(seconds / 86400)} hari lalu`;
     };
 
+    // Format refresh time
+    const formatRefreshTime = (date) => {
+        return date.toLocaleTimeString('id-ID', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            second: '2-digit'
+        });
+    };
+
+    // Get status badge color
+    const getStatusBadgeColor = (status) => {
+        switch(status?.toLowerCase()) {
+            case 'active':
+                return 'bg-green-500';
+            case 'stopped':
+                return 'bg-yellow-500';
+            case 'completed':
+                return 'bg-gray-500';
+            default:
+                return 'bg-blue-500';
+        }
+    };
+
+    // Get kondisi badge color
+    const getKondisiBadgeColor = (kondisi) => {
+        switch(kondisi?.toLowerCase()) {
+            case 'lancar':
+                return 'bg-green-50 border-green-200 text-green-700';
+            case 'macet':
+                return 'bg-red-50 border-red-200 text-red-700';
+            case 'mogok':
+                return 'bg-orange-50 border-orange-200 text-orange-700';
+            default:
+                return 'bg-gray-50 border-gray-200 text-gray-700';
+        }
+    };
+
     return (
         <SimpleLayout
             pageTitle="Dashboard Operasional"
@@ -486,15 +586,11 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
             <div className="space-y-4">
                 {/* Error Alert */}
                 {error && (
-                    <div className="bg-red-50 border-l-4 border-red-400 text-red-700 px-4 py-3 rounded flex items-center gap-3">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <div>
-                            <p className="font-semibold">Firebase Error</p>
-                            <p className="text-sm">{error}</p>
-                        </div>
-                    </div>
+                    <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertTitle>Firebase Error</AlertTitle>
+                        <AlertDescription>{error}</AlertDescription>
+                    </Alert>
                 )}
 
                 {/* Stats Cards */}
@@ -509,38 +605,38 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                         </CardContent>
                     </Card>
 
-                    <Card className="border-l-4 border-l-blue-600">
+                    <Card className="border-l-4 border-l-green-600">
                         <CardHeader className="flex flex-row items-center justify-between pb-2">
                             <CardTitle className="text-xs font-medium text-slate-600 uppercase tracking-wider">Bus Beroperasi</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="text-2xl font-bold text-blue-600">{currentStats?.active_buses || 0}</div>
+                            <div className="text-2xl font-bold text-green-600">{currentStats?.active_buses || 0}</div>
                             <p className="text-xs text-slate-500 mt-1">Sedang di rute</p>
                         </CardContent>
                     </Card>
 
-                    <Card className="border-l-4 border-l-blue-600">
+                    <Card className="border-l-4 border-l-purple-600">
                         <CardHeader className="flex flex-row items-center justify-between pb-2">
                             <CardTitle className="text-xs font-medium text-slate-600 uppercase tracking-wider">Total Penumpang</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="text-2xl font-bold text-blue-600">{currentStats?.total_passengers || 0}</div>
+                            <div className="text-2xl font-bold text-purple-600">{currentStats?.total_passengers || 0}</div>
                             <p className="text-xs text-slate-500 mt-1">dari {currentStats?.total_capacity || 0} kapasitas</p>
                         </CardContent>
                     </Card>
 
-                    <Card className="border-l-4 border-l-blue-600">
+                    <Card className="border-l-4 border-l-orange-600">
                         <CardHeader className="flex flex-row items-center justify-between pb-2">
                             <CardTitle className="text-xs font-medium text-slate-600 uppercase tracking-wider">Kecepatan Rata-rata</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="text-2xl font-bold text-blue-600">{currentStats?.average_speed || 0}</div>
+                            <div className="text-2xl font-bold text-orange-600">{currentStats?.average_speed || 0}</div>
                             <p className="text-xs text-slate-500 mt-1">km/jam</p>
                         </CardContent>
                     </Card>
                 </div>
 
-                {/* Map Section - FULL WIDTH dengan Floating Card */}
+                {/* Map Section */}
                 <Card className="relative">
                     <CardHeader className="border-b bg-slate-50">
                         <div className="flex items-center justify-between">
@@ -558,6 +654,9 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                     </span>
                                     LIVE
                                 </div>
+                                <div className="text-xs text-slate-500">
+                                    Last: {formatRefreshTime(lastRefreshTime)}
+                                </div>
                                 <Button 
                                     onClick={() => fetchLatestData(false)}
                                     disabled={isRefreshing}
@@ -571,7 +670,12 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                             Refreshing...
                                         </>
                                     ) : (
-                                        'Refresh'
+                                        <>
+                                            <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                            </svg>
+                                            Refresh
+                                        </>
                                     )}
                                 </Button>
                             </div>
@@ -590,10 +694,10 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                             </div>
                         )}
 
-                        {/* Floating Detail Card (Popup 2) - Kanan Bawah */}
+                        {/* Floating Detail Card - ENHANCED */}
                         {selectedBus && (
                             <div className="absolute bottom-4 right-4 w-80 bg-white rounded-lg shadow-2xl border border-slate-200 overflow-hidden z-10">
-                                <div className="sticky top-0 bg-blue-600 text-white p-3 flex items-center justify-between">
+                                <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-blue-700 text-white p-3 flex items-center justify-between">
                                     <div className="flex items-center gap-2">
                                         <Navigation className="w-5 h-5" />
                                         <h3 className="font-bold text-sm">Detail Bus</h3>
@@ -608,22 +712,27 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                     </Button>
                                 </div>
                                 
-                                <ScrollArea className="h-[440px]">
+                                <ScrollArea className="h-[500px]">
                                     <div className="p-4 space-y-4">
-                                        {/* Header */}
+                                        {/* Header dengan Nama Bus */}
                                         <div className="flex items-center gap-3 pb-3 border-b">
-                                            <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                                            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center flex-shrink-0 shadow-md">
                                                 <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
                                                     <path d="M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z"/>
                                                 </svg>
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <h4 className="font-bold text-base text-slate-900 truncate">{selectedBus.plateNumber || selectedBus.id}</h4>
-                                                <p className="text-xs text-slate-500">{selectedBus.class || 'N/A'}</p>
+                                                <h4 className="font-bold text-base text-slate-900 truncate">{selectedBus.namaBus || selectedBus.plateNumber || selectedBus.id}</h4>
+                                                <p className="text-xs text-slate-500">{selectedBus.plateNumber} • {selectedBus.class || 'N/A'}</p>
                                             </div>
-                                            <Badge className={selectedBus.isOnline ? 'bg-green-500' : 'bg-slate-400'}>
-                                                {selectedBus.isOnline ? 'Online' : 'Offline'}
-                                            </Badge>
+                                            <div className="flex flex-col gap-1">
+                                                <Badge className={selectedBus.isOnline ? 'bg-green-500' : 'bg-slate-400'}>
+                                                    {selectedBus.isOnline ? 'Online' : 'Offline'}
+                                                </Badge>
+                                                <Badge className={getStatusBadgeColor(selectedBus.status)}>
+                                                    {selectedBus.status || 'N/A'}
+                                                </Badge>
+                                            </div>
                                         </div>
 
                                         {/* Details */}
@@ -648,11 +757,21 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
 
                                             <Separator />
 
-                                            <div className="flex items-start gap-2">
-                                                <Gauge className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="text-xs text-slate-500">Kecepatan</p>
-                                                    <p className="font-semibold text-slate-900">{selectedBus.location?.speed?.toFixed(1) || 0} km/jam</p>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div className="flex items-start gap-2">
+                                                    <Gauge className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs text-slate-500">Kecepatan</p>
+                                                        <p className="font-semibold text-slate-900">{selectedBus.location?.speed?.toFixed(1) || 0} km/jam</p>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-start gap-2">
+                                                    <TrendingUp className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs text-slate-500">Total Jarak</p>
+                                                        <p className="font-semibold text-slate-900">{selectedBus.totalDistance?.toFixed(2) || 0} km</p>
+                                                    </div>
                                                 </div>
                                             </div>
 
@@ -670,7 +789,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                 </div>
                                                 <div className="w-full bg-slate-200 rounded-full h-2">
                                                     <div 
-                                                        className="bg-blue-600 h-2 rounded-full transition-all"
+                                                        className="bg-gradient-to-r from-blue-500 to-blue-600 h-2 rounded-full transition-all"
                                                         style={{ 
                                                             width: `${selectedBus.capacity > 0 ? (selectedBus.currentPassengers / selectedBus.capacity) * 100 : 0}%` 
                                                         }}
@@ -684,17 +803,16 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                             {selectedBus.kondisi && (
                                                 <>
                                                     <Separator />
-                                                    <div className={`p-3 rounded-lg border ${
-                                                        selectedBus.kondisi === 'lancar' 
-                                                            ? 'bg-green-50 border-green-200' 
-                                                            : 'bg-red-50 border-red-200'
-                                                    }`}>
-                                                        <p className="text-xs font-medium text-slate-600 mb-1">Kondisi Lalu Lintas</p>
-                                                        <p className={`font-bold text-sm uppercase ${
-                                                            selectedBus.kondisi === 'lancar' ? 'text-green-700' : 'text-red-700'
-                                                        }`}>
+                                                    <div className={`p-3 rounded-lg border ${getKondisiBadgeColor(selectedBus.kondisi)}`}>
+                                                        <p className="text-xs font-medium mb-1">Kondisi Lalu Lintas</p>
+                                                        <p className="font-bold text-sm uppercase">
                                                             {selectedBus.kondisi}
                                                         </p>
+                                                        {selectedBus.kondisiUpdate && (
+                                                            <p className="text-xs mt-1 opacity-75">
+                                                                Update: {timeAgo(selectedBus.kondisiUpdate)}
+                                                            </p>
+                                                        )}
                                                     </div>
                                                 </>
                                             )}
@@ -725,6 +843,12 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                                     {selectedBus.eta.remainingDistance?.toFixed(1) || 'N/A'} km
                                                                 </p>
                                                             </div>
+                                                            <div className="col-span-2">
+                                                                <p className="text-blue-700">Durasi</p>
+                                                                <p className="font-semibold text-blue-900">
+                                                                    {selectedBus.eta.remainingTime ? `${Math.round(selectedBus.eta.remainingTime / 60)} menit` : 'N/A'}
+                                                                </p>
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </>
@@ -740,18 +864,30 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                             </div>
                                         </div>
 
-                                        {/* Legend - Simple */}
+                                        {/* Legend */}
                                         <Separator />
                                         <div className="bg-slate-50 rounded-lg p-3 space-y-2">
                                             <p className="text-xs font-semibold text-slate-700 mb-2">Legenda Peta</p>
                                             <div className="space-y-2">
                                                 <div className="flex items-center gap-2 text-xs">
-                                                    <div className="w-10 h-1.5 bg-orange-500 rounded-sm" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #F97316 0px, #F97316 8px, transparent 8px, transparent 16px)' }}></div>
+                                                    <div className="w-10 h-1.5 bg-blue-500 rounded-sm"></div>
                                                     <span className="text-slate-600">Rute Utama (Planned)</span>
                                                 </div>
                                                 <div className="flex items-center gap-2 text-xs">
                                                     <div className="w-10 h-1.5 bg-green-500 rounded-sm"></div>
                                                     <span className="text-slate-600">Track Perjalanan (Actual)</span>
+                                                </div>
+                                                <div className="flex items-center gap-2 text-xs">
+                                                    <div className="w-6 h-6 rounded-full bg-white border-2 border-slate-300 flex items-center justify-center">
+                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                                                            <rect x="6" y="4" width="12" height="16" rx="2" fill="#3B82F6"/>
+                                                        </svg>
+                                                    </div>
+                                                    <span className="text-slate-600">Bus Online</span>
+                                                </div>
+                                                <div className="flex items-center gap-2 text-xs">
+                                                    <div className="w-10 h-10 rounded-full bg-blue-500 opacity-10 border border-blue-500"></div>
+                                                    <span className="text-slate-600">Area Radius Bus (300m)</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -762,7 +898,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                     </CardContent>
                 </Card>
 
-                {/* Bus List - Di bawah map */}
+                {/* Bus List - ENHANCED */}
                 <Card>
                     <CardHeader className="border-b bg-slate-50">
                         <div className="flex items-center justify-between">
@@ -771,7 +907,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                 <Badge variant="outline" className="font-mono text-xs">
                                     {Object.keys(currentBuses).length} Total
                                 </Badge>
-                                <Badge className="bg-blue-600 font-mono text-xs">
+                                <Badge className="bg-green-600 font-mono text-xs">
                                     {Object.values(currentBuses).filter(b => hasValidGPS(b)).length} Online
                                 </Badge>
                             </div>
@@ -796,14 +932,14 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                         <CardContent className="p-3">
                                             <div className="flex items-center justify-between mb-2">
                                                 <div className="flex items-center gap-2">
-                                                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isOnline ? 'bg-blue-600' : 'bg-slate-400'}`}>
+                                                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isOnline ? 'bg-gradient-to-br from-blue-500 to-blue-700' : 'bg-slate-400'}`}>
                                                         <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
                                                             <path d="M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6H6V6h12v5z"/>
                                                         </svg>
                                                     </div>
-                                                    <div>
-                                                        <p className="font-semibold text-xs text-slate-900 leading-tight">{bus.plateNumber || busId}</p>
-                                                        <p className="text-xs text-slate-500">{bus.class || 'N/A'}</p>
+                                                    <div className="min-w-0">
+                                                        <p className="font-semibold text-xs text-slate-900 leading-tight truncate">{bus.namaBus || bus.plateNumber || busId}</p>
+                                                        <p className="text-xs text-slate-500 truncate">{bus.plateNumber}</p>
                                                     </div>
                                                 </div>
                                                 <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-slate-400'}`}></div>
@@ -820,10 +956,16 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                 </div>
                                                 <div className="w-full bg-slate-200 rounded-full h-1.5">
                                                     <div 
-                                                        className="bg-blue-600 h-1.5 rounded-full transition-all"
+                                                        className="bg-gradient-to-r from-blue-500 to-blue-600 h-1.5 rounded-full transition-all"
                                                         style={{ width: `${percentage}%` }}
                                                     ></div>
                                                 </div>
+                                                {bus.totalDistance !== undefined && (
+                                                    <div className="flex justify-between pt-1 border-t border-slate-200">
+                                                        <span className="text-slate-500">Jarak</span>
+                                                        <span className="font-medium text-slate-900">{bus.totalDistance?.toFixed(1) || 0} km</span>
+                                                    </div>
+                                                )}
                                             </div>
                                         </CardContent>
                                     </Card>
@@ -839,7 +981,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                     </CardContent>
                 </Card>
 
-                {/* Detail Armada - Task List Style */}
+                {/* Detail Armada - ENHANCED */}
                 <Card>
                     <CardHeader className="border-b bg-slate-50">
                         <CardTitle className="text-base font-semibold">Detail Status Armada</CardTitle>
@@ -862,7 +1004,6 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                 } ${selectedBus?.id === busId ? 'ring-2 ring-blue-600' : ''}`}
                                                 onClick={() => focusOnBus(busId)}
                                             >
-                                                {/* Checkbox-like indicator */}
                                                 <div className="flex-shrink-0 mt-1">
                                                     <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                                                         isOnline ? 'border-green-500 bg-green-50' : 'border-slate-300 bg-slate-100'
@@ -873,16 +1014,21 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                     </div>
                                                 </div>
 
-                                                {/* Content */}
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-start justify-between gap-2 mb-2">
-                                                        <div className="flex-1">
-                                                            <h4 className="font-semibold text-sm text-slate-900">{bus.plateNumber || busId}</h4>
-                                                            <div className="flex items-center gap-2 mt-1">
+                                                        <div className="flex-1 min-w-0">
+                                                            <h4 className="font-semibold text-sm text-slate-900 truncate">{bus.namaBus || bus.plateNumber || busId}</h4>
+                                                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                                                <Badge variant="outline" className="text-xs">{bus.plateNumber}</Badge>
                                                                 <Badge variant="outline" className="text-xs">{bus.class || 'N/A'}</Badge>
                                                                 <Badge className={isOnline ? 'bg-green-500 text-xs' : 'bg-slate-400 text-xs'}>
                                                                     {isOnline ? 'Online' : 'Offline'}
                                                                 </Badge>
+                                                                {bus.status && (
+                                                                    <Badge className={`${getStatusBadgeColor(bus.status)} text-xs`}>
+                                                                        {bus.status}
+                                                                    </Badge>
+                                                                )}
                                                             </div>
                                                         </div>
                                                         <div className="text-right">
@@ -893,8 +1039,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
 
                                                     <Separator className="my-2" />
 
-                                                    {/* Details Grid */}
-                                                    <div className="grid grid-cols-2 gap-3 text-xs mb-2">
+                                                    <div className="grid grid-cols-3 gap-3 text-xs mb-2">
                                                         <div>
                                                             <span className="text-slate-500">Rute:</span>
                                                             <p className="font-medium text-slate-900 truncate">{bus.route || 'N/A'}</p>
@@ -903,9 +1048,12 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                             <span className="text-slate-500">Supir:</span>
                                                             <p className="font-medium text-slate-900 truncate">{bus.driver || 'N/A'}</p>
                                                         </div>
+                                                        <div>
+                                                            <span className="text-slate-500">Total Jarak:</span>
+                                                            <p className="font-medium text-slate-900">{bus.totalDistance?.toFixed(1) || 0} km</p>
+                                                        </div>
                                                     </div>
 
-                                                    {/* Progress */}
                                                     <div className="space-y-1">
                                                         <div className="flex justify-between text-xs">
                                                             <span className="text-slate-500">Okupansi</span>
@@ -914,24 +1062,27 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                         <div className="w-full bg-slate-200 rounded-full h-2">
                                                             <div 
                                                                 className={`h-2 rounded-full transition-all ${
-                                                                    percentage > 80 ? 'bg-red-500' : 
-                                                                    percentage > 50 ? 'bg-yellow-500' : 
-                                                                    'bg-green-500'
+                                                                    percentage > 80 ? 'bg-gradient-to-r from-red-500 to-red-600' : 
+                                                                    percentage > 50 ? 'bg-gradient-to-r from-yellow-500 to-yellow-600' : 
+                                                                    'bg-gradient-to-r from-green-500 to-green-600'
                                                                 }`}
                                                                 style={{ width: `${percentage}%` }}
                                                             ></div>
                                                         </div>
                                                     </div>
 
-                                                    {/* Status badges */}
-                                                    {bus.kondisi && (
-                                                        <div className="flex items-center gap-2 mt-2">
-                                                            <Badge variant="outline" className="text-xs">
-                                                                Traffic: {bus.kondisi}
-                                                            </Badge>
-                                                            {bus.eta && (
+                                                    {(bus.kondisi || bus.eta) && (
+                                                        <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                                            {bus.kondisi && (
                                                                 <Badge variant="outline" className="text-xs">
-                                                                    ETA: {bus.eta.remainingTime ? `${Math.round(bus.eta.remainingTime / 60)} min` : 'N/A'}
+                                                                    <RouteIcon className="w-3 h-3 mr-1" />
+                                                                    Traffic: {bus.kondisi}
+                                                                </Badge>
+                                                            )}
+                                                            {bus.eta && bus.eta.remainingTime && (
+                                                                <Badge variant="outline" className="text-xs">
+                                                                    <Clock className="w-3 h-3 mr-1" />
+                                                                    ETA: {Math.round(bus.eta.remainingTime / 60)} min
                                                                 </Badge>
                                                             )}
                                                         </div>
@@ -955,7 +1106,6 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
 
                 {/* Performance Charts */}
                 <div className="grid gap-4 md:grid-cols-2">
-                    {/* Occupancy Chart */}
                     <Card>
                         <CardHeader className="border-b bg-slate-50">
                             <CardTitle className="text-base font-semibold">Okupansi Armada</CardTitle>
@@ -971,7 +1121,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                     return (
                                         <div key={busId} className="space-y-1">
                                             <div className="flex justify-between text-xs">
-                                                <span className="font-medium text-slate-700">{bus.plateNumber || busId}</span>
+                                                <span className="font-medium text-slate-700 truncate">{bus.namaBus || bus.plateNumber || busId}</span>
                                                 <span className="font-bold text-slate-900">{percentage}%</span>
                                             </div>
                                             <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
@@ -991,7 +1141,6 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                         </CardContent>
                     </Card>
 
-                    {/* Speed Chart */}
                     <Card>
                         <CardHeader className="border-b bg-slate-50">
                             <CardTitle className="text-base font-semibold">Kecepatan Real-time</CardTitle>
@@ -1001,13 +1150,13 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                             <div className="space-y-3">
                                 {Object.entries(currentBuses).slice(0, 5).map(([busId, bus]) => {
                                     const speed = bus.location?.speed || 0;
-                                    const maxSpeed = 100; // Max speed untuk scale
+                                    const maxSpeed = 100;
                                     const speedPercentage = Math.min((speed / maxSpeed) * 100, 100);
                                     
                                     return (
                                         <div key={busId} className="flex items-center gap-3">
                                             <div className="w-24 text-xs font-medium text-slate-700 truncate">
-                                                {bus.plateNumber || busId}
+                                                {bus.namaBus || bus.plateNumber || busId}
                                             </div>
                                             <div className="flex-1 space-y-1">
                                                 <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">

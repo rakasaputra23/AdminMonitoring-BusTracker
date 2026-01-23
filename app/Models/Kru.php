@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Laravel\Sanctum\HasApiTokens;
+use Illuminate\Support\Facades\Hash;
 
 class Kru extends Authenticatable
 {
@@ -22,6 +23,16 @@ class Kru extends Authenticatable
     protected $hidden = [
         'password',
     ];
+
+    /**
+     * Automatically hash password when setting
+     */
+    protected function setPasswordAttribute($value): void
+    {
+        if (!empty($value)) {
+            $this->attributes['password'] = Hash::make($value);
+        }
+    }
 
     public function perjalanan()
     {

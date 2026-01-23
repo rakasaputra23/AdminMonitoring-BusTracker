@@ -12,16 +12,19 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // ✅ Web middleware group (tanpa alias)
+        // Web middleware
         $middleware->web(append: [
             \App\Http\Middleware\HandleInertiaRequests::class,
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
         ]);
 
-        // ✅ Register middleware alias dengan benar
+        // Middleware alias
         $middleware->alias([
             'superadmin' => \App\Http\Middleware\CheckSuperAdmin::class,
         ]);
+
+        // ✅ TAMBAHAN: Trust all proxies untuk Ngrok
+        $middleware->trustProxies(at: '*');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
