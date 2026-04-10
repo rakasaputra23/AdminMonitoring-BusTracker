@@ -3,41 +3,37 @@ import SimpleLayout from '@/Layouts/SimpleLayout';
 import { Head, router } from '@inertiajs/react';
 
 export default function Kru({ auth, kru, filters }) {
-  const [showModal, setShowModal] = useState(false);
-  const [editMode, setEditMode] = useState(false);
-  const [currentKru, setCurrentKru] = useState(null);
+  const [showModal, setShowModal]             = useState(false);
+  const [editMode, setEditMode]               = useState(false);
+  const [currentKru, setCurrentKru]           = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [kruToDelete, setKruToDelete] = useState(null);
-  
+  const [kruToDelete, setKruToDelete]         = useState(null);
+  const [errors, setErrors]                   = useState({});
+  const [showPassword, setShowPassword]       = useState(false);
+
   const [formData, setFormData] = useState({
-    driver: '',
-    username: '',
-    password: '',
-    status: 'aktif',
+    driver   : '',
+    username : '',
+    password : '',
+    status   : 'aktif',
   });
 
-  const [searchTerm, setSearchTerm] = useState(filters?.search || '');
+  const [searchTerm, setSearchTerm]     = useState(filters?.search || '');
   const [statusFilter, setStatusFilter] = useState(filters?.status || '');
 
-  const handleOpenModal = (kru = null) => {
-    if (kru) {
+  // ── Modal ──────────────────────────────────────────────────────────
+
+  const handleOpenModal = (item = null) => {
+    setErrors({});
+    setShowPassword(false);
+    if (item) {
       setEditMode(true);
-      setCurrentKru(kru);
-      setFormData({
-        driver: kru.driver,
-        username: kru.username,
-        password: '',
-        status: kru.status,
-      });
+      setCurrentKru(item);
+      setFormData({ driver: item.driver, username: item.username, password: '', status: item.status });
     } else {
       setEditMode(false);
       setCurrentKru(null);
-      setFormData({
-        driver: '',
-        username: '',
-        password: '',
-        status: 'aktif',
-      });
+      setFormData({ driver: '', username: '', password: '', status: 'aktif' });
     }
     setShowModal(true);
   };
@@ -46,30 +42,32 @@ export default function Kru({ auth, kru, filters }) {
     setShowModal(false);
     setEditMode(false);
     setCurrentKru(null);
-    setFormData({
-      driver: '',
-      username: '',
-      password: '',
-      status: 'aktif',
-    });
+    setErrors({});
+    setShowPassword(false);
+    setFormData({ driver: '', username: '', password: '', status: 'aktif' });
   };
+
+  // ── Submit ─────────────────────────────────────────────────────────
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    
     if (editMode && currentKru) {
       router.put(`/data-master/kru/${currentKru.id}`, formData, {
-        onSuccess: () => handleCloseModal(),
+        onSuccess : () => handleCloseModal(),
+        onError   : (errs) => setErrors(errs),
       });
     } else {
       router.post('/data-master/kru', formData, {
-        onSuccess: () => handleCloseModal(),
+        onSuccess : () => handleCloseModal(),
+        onError   : (errs) => setErrors(errs),
       });
     }
   };
 
-  const handleDelete = (kru) => {
-    setKruToDelete(kru);
+  // ── Delete ─────────────────────────────────────────────────────────
+
+  const handleDelete = (item) => {
+    setKruToDelete(item);
     setShowDeleteConfirm(true);
   };
 
@@ -84,29 +82,30 @@ export default function Kru({ auth, kru, filters }) {
     }
   };
 
+  // ── Search ─────────────────────────────────────────────────────────
+
   const handleSearch = (e) => {
     e.preventDefault();
     router.get('/data-master/kru', { search: searchTerm, status: statusFilter }, {
-      preserveState: true,
-      preserveScroll: true,
+      preserveState  : true,
+      preserveScroll : true,
     });
   };
 
   const resetFilters = () => {
     setSearchTerm('');
     setStatusFilter('');
-    router.get('/data-master/kru', {}, {
-      preserveState: true,
-      preserveScroll: true,
-    });
+    router.get('/data-master/kru', {}, { preserveState: true, preserveScroll: true });
   };
 
+  // ──────────────────────────────────────────────────────────────────
   return (
     <SimpleLayout user={auth.user} pageTitle="Data Kru">
       <Head title="Data Kru" />
 
       <div className="space-y-6">
-        {/* Header */}
+
+        {/* ── Header ── */}
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Data Kru</h1>
@@ -123,10 +122,10 @@ export default function Kru({ auth, kru, filters }) {
           </button>
         </div>
 
-        {/* Search & Filter */}
+        {/* ── Search & Filter ── */}
         <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <form onSubmit={handleSearch} className="flex gap-3">
-            <div className="flex-1">
+          <form onSubmit={handleSearch} className="flex gap-3 flex-wrap">
+            <div className="flex-1 min-w-[250px]">
               <input
                 type="text"
                 placeholder="Cari nama driver atau username..."
@@ -162,88 +161,97 @@ export default function Kru({ auth, kru, filters }) {
           </form>
         </div>
 
-        {/* Kru Table */}
+        {/* ── Kru Table ── */}
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Driver</th>
-                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Username</th>
-                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Dibuat</th>
-                <th className="px-6 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {kru.data.length === 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <td colSpan="5" className="px-6 py-12 text-center text-gray-500">
-                    Tidak ada data kru
-                  </td>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Driver</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Username</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Dibuat</th>
+                  <th className="px-6 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
                 </tr>
-              ) : (
-                kru.data.map((item) => (
-                  <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-white font-semibold">
-                          {item.driver.charAt(0).toUpperCase()}
-                        </div>
-                        <span className="font-medium text-gray-900">{item.driver}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-gray-600">{item.username}</td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                        item.status === 'aktif' 
-                          ? 'bg-green-100 text-green-700' 
-                          : 'bg-red-100 text-red-700'
-                      }`}>
-                        {item.status === 'aktif' ? 'Aktif' : 'Nonaktif'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-gray-600 text-sm">
-                      {new Date(item.created_at).toLocaleDateString('id-ID', { 
-                        day: 'numeric', 
-                        month: 'short', 
-                        year: 'numeric' 
-                      })}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => handleOpenModal(item)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Edit Kru"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => handleDelete(item)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Hapus Kru"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {kru.data.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" className="px-6 py-12 text-center text-gray-500">
+                      Tidak ada data kru
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  kru.data.map((item) => (
+                    <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                      {/* Nama Driver */}
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-white font-semibold flex-shrink-0">
+                            {item.driver.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-medium text-gray-900">{item.driver}</span>
+                        </div>
+                      </td>
+                      {/* Username */}
+                      <td className="px-6 py-4">
+                        <span className="font-mono text-sm text-gray-700 bg-gray-100 px-2 py-1 rounded">
+                          {item.username}
+                        </span>
+                      </td>
+                      {/* Status */}
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                          item.status === 'aktif'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-red-100 text-red-700'
+                        }`}>
+                          {item.status === 'aktif' ? 'Aktif' : 'Nonaktif'}
+                        </span>
+                      </td>
+                      {/* Dibuat */}
+                      <td className="px-6 py-4 text-gray-600 text-sm">
+                        {new Date(item.created_at).toLocaleDateString('id-ID', {
+                          day: 'numeric', month: 'short', year: 'numeric',
+                        })}
+                      </td>
+                      {/* Aksi */}
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleOpenModal(item)}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="Edit Kru"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleDelete(item)}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Hapus Kru"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
 
           {/* Pagination */}
           {kru.data.length > 0 && (
-            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+            <div className="px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="text-sm text-gray-600">
                 Menampilkan {kru.from} - {kru.to} dari {kru.total} kru
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap justify-center">
                 {kru.links.map((link, index) => (
                   <button
                     key={index}
@@ -265,10 +273,14 @@ export default function Kru({ auth, kru, filters }) {
         </div>
       </div>
 
-      {/* Modal Add/Edit Kru */}
+      {/* ══════════════════════════════════════════════════════════
+          Modal Add / Edit Kru
+      ══════════════════════════════════════════════════════════ */}
       {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+
+            {/* Header */}
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-900">
                 {editMode ? 'Edit Kru' : 'Tambah Kru'}
@@ -281,44 +293,85 @@ export default function Kru({ auth, kru, filters }) {
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
+
+              {/* Nama Driver */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Nama Driver</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Nama Driver <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   value={formData.driver}
                   onChange={(e) => setFormData({ ...formData, driver: e.target.value })}
                   required
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="Contoh: Budi Santoso"
+                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    errors.driver ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                  }`}
                 />
+                {errors.driver && <p className="text-red-600 text-xs mt-1">{errors.driver}</p>}
               </div>
 
+              {/* Username */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Username</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Username <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   value={formData.username}
                   onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                   required
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="Contoh: budi123"
+                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                    errors.username ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                  }`}
                 />
+                {errors.username && <p className="text-red-600 text-xs mt-1">{errors.username}</p>}
               </div>
 
+              {/* Password */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Password {editMode && <span className="text-gray-500">(kosongkan jika tidak ingin mengubah)</span>}
+                  Password{' '}
+                  {editMode
+                    ? <span className="text-gray-400 font-normal">(kosongkan jika tidak ingin mengubah)</span>
+                    : <span className="text-red-500">*</span>
+                  }
                 </label>
-                <input
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  required={!editMode}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Minimal 6 karakter"
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    required={!editMode}
+                    placeholder="Minimal 6 karakter"
+                    className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      errors.password ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    tabIndex={-1}
+                  >
+                    {showPassword ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                {errors.password && <p className="text-red-600 text-xs mt-1">{errors.password}</p>}
               </div>
 
+              {/* Status */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
                 <select
@@ -332,17 +385,18 @@ export default function Kru({ auth, kru, filters }) {
                 </select>
               </div>
 
-              <div className="flex gap-3 pt-4">
+              {/* Footer Buttons */}
+              <div className="flex gap-3 pt-2">
                 <button
                   type="button"
                   onClick={handleCloseModal}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors font-medium"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                  className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium"
                 >
                   {editMode ? 'Simpan Perubahan' : 'Tambah Kru'}
                 </button>
@@ -352,9 +406,11 @@ export default function Kru({ auth, kru, filters }) {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* ══════════════════════════════════════════════════════════
+          Delete Confirmation Modal
+      ══════════════════════════════════════════════════════════ */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
             <div className="flex items-center gap-4 mb-4">
               <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
@@ -365,7 +421,8 @@ export default function Kru({ auth, kru, filters }) {
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">Konfirmasi Hapus</h3>
                 <p className="text-sm text-gray-600 mt-1">
-                  Apakah Anda yakin ingin menghapus kru <span className="font-semibold">{kruToDelete?.driver}</span>?
+                  Apakah Anda yakin ingin menghapus kru{' '}
+                  <span className="font-semibold">{kruToDelete?.driver}</span>?
                 </p>
               </div>
             </div>
