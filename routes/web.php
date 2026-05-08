@@ -7,6 +7,8 @@ use App\Http\Controllers\KruController;
 use App\Http\Controllers\ArmadaController;
 use App\Http\Controllers\RuteController;
 use App\Http\Controllers\TarifController; // ← TAMBAHKAN INI
+use App\Http\Controllers\LaporanRiwayatController;
+use App\Http\Controllers\LaporanPendapatanController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -67,13 +69,8 @@ Route::middleware('auth')->group(function () {
     Route::delete('/data-master/kru/{kru}',            [KruController::class, 'destroy'])->name('data-master.kru.destroy');
 
     // Laporan Routes (Placeholder)
-    Route::get('/laporan/riwayat', function () {
-        return Inertia::render('ComingSoon', ['feature' => 'Riwayat Perjalanan']);
-    })->name('laporan.riwayat');
-
-    Route::get('/laporan/pendapatan', function () {
-        return Inertia::render('ComingSoon', ['feature' => 'Laporan Pendapatan']);
-    })->name('laporan.pendapatan');
+    Route::get('/laporan/riwayat',    [LaporanRiwayatController::class,    'index'])->name('laporan.riwayat');
+    Route::get('/laporan/pendapatan', [LaporanPendapatanController::class, 'index'])->name('laporan.pendapatan');
 });
 
 /*

@@ -6,15 +6,15 @@ use App\Http\Controllers\Controller;
 use App\Models\Kru;
 use App\Models\Armada;
 use App\Models\Rute;
+use App\Models\Tarif;
 use App\Models\Perjalanan;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\ValidationException;
 
 class KruController extends Controller
 {
     /**
-     * LOGIN - Endpoint untuk login kru bus
+     * LOGIN
      * POST /api/kru/login
      */
     public function login(Request $request)
@@ -40,7 +40,6 @@ class KruController extends Controller
             ], 403);
         }
 
-        // Generate token
         $token = $kru->createToken('kru-mobile-token')->plainTextToken;
 
         return response()->json([
@@ -48,10 +47,10 @@ class KruController extends Controller
             'message' => 'Login berhasil',
             'data' => [
                 'kru' => [
-                    'id' => $kru->id,
-                    'driver' => $kru->driver,
+                    'id'       => $kru->id,
+                    'driver'   => $kru->driver,
                     'username' => $kru->username,
-                    'status' => $kru->status,
+                    'status'   => $kru->status,
                 ],
                 'token' => $token
             ]
@@ -59,49 +58,57 @@ class KruController extends Controller
     }
 
     /**
-     * GET ARMADA - Ambil list armada yang aktif
+     * GET ARMADA - Armada aktif beserta firebase_bus_id
      * GET /api/kru/armada
      */
     public function getArmada()
     {
-        $armada = Armada::where('status', 'aktif')->get();
+        $armada = Armada::aktif()->get([
+            'id', 'nama_bus', 'plat_nomor', 'kelas',
+            'kapasitas', 'status', 'firebase_bus_id',
+        ]);
 
         return response()->json([
             'success' => true,
             'message' => 'Data armada berhasil diambil',
-            'data' => $armada
+            'data'    => $armada
         ], 200);
     }
 
     /**
-     * GET RUTE - Ambil list rute yang aktif dengan track coordinates
+     * GET RUTE - Rute aktif dengan tarif
      * GET /api/kru/rute
      */
     public function getRute()
     {
         $rute = Rute::where('status', 'aktif')
             ->select('id', 'nama_rute', 'kota_asal', 'kota_tujuan', 'polyline', 'track_coordinates', 'jarak', 'estimasi_waktu')
+            ->with(['tarif:id,rute_id,harga'])
             ->get();
 
         return response()->json([
             'success' => true,
             'message' => 'Data rute berhasil diambil',
-            'data' => $rute
+            'data'    => $rute
         ], 200);
     }
 
     /**
-     * MULAI PERJALANAN - Buat record perjalanan baru
+     * MULAI PERJALANAN
      * POST /api/kru/perjalanan/mulai
+     *
+     * Perubahan dari versi lama:
+     * - Ambil tarif aktif untuk rute yang dipilih → simpan ke tarif_snapshot
+     * - Response mengembalikan firebase_bus_id dan perjalanan_id agar kru app
+     *   bisa set activePerjalananId + reset totalPassengersBoarded di Firebase
      */
     public function mulaiPerjalanan(Request $request)
     {
         $request->validate([
             'armada_id' => 'required|exists:armada,id',
-            'rute_id' => 'required|exists:rute,id',
+            'rute_id'   => 'required|exists:rute,id',
         ]);
 
-        // Cek apakah kru masih punya perjalanan aktif
         $perjalananAktif = Perjalanan::where('kru_id', $request->user()->id)
             ->where('status', 'aktif')
             ->first();
@@ -113,35 +120,47 @@ class KruController extends Controller
             ], 400);
         }
 
-        // Buat perjalanan baru
+        // Ambil tarif aktif untuk rute ini — disimpan sebagai snapshot
+        $tarif = Tarif::where('rute_id', $request->rute_id)
+            ->where('status', 'aktif')
+            ->first();
+
         $perjalanan = Perjalanan::create([
-            'kru_id' => $request->user()->id,
-            'armada_id' => $request->armada_id,
-            'rute_id' => $request->rute_id,
-            'waktu_mulai' => now(),
-            'status' => 'aktif',
+            'kru_id'           => $request->user()->id,
+            'armada_id'        => $request->armada_id,
+            'rute_id'          => $request->rute_id,
+            'waktu_mulai'      => now(),
+            'status'           => 'aktif',
             'kondisi_terakhir' => 'lancar',
+            'tarif_snapshot'   => $tarif?->harga,
         ]);
 
-        // Load relasi
         $perjalanan->load(['kru', 'armada', 'rute']);
+
+        // firebase_bus_id dikirim balik ke kru app agar app tahu
+        // node Firebase mana yang harus diupdate (set activePerjalananId)
+        $firebaseBusId = $perjalanan->armada->firebase_bus_id;
 
         return response()->json([
             'success' => true,
             'message' => 'Perjalanan berhasil dimulai',
-            'data' => $perjalanan
+            'data'    => [
+                'perjalanan'      => $perjalanan,
+                'firebase_bus_id' => $firebaseBusId,
+                'tarif_berlaku'   => $tarif?->harga,
+            ]
         ], 201);
     }
 
     /**
-     * UPDATE KONDISI - Update kondisi bus (lancar/macet/mogok)
+     * UPDATE KONDISI
      * POST /api/kru/perjalanan/kondisi
      */
     public function updateKondisi(Request $request)
     {
         $request->validate([
             'perjalanan_id' => 'required|exists:perjalanan,id',
-            'kondisi' => 'required|in:lancar,macet,mogok',
+            'kondisi'       => 'required|in:lancar,macet,mogok',
         ]);
 
         $perjalanan = Perjalanan::where('id', $request->perjalanan_id)
@@ -156,25 +175,27 @@ class KruController extends Controller
             ], 404);
         }
 
-        $perjalanan->update([
-            'kondisi_terakhir' => $request->kondisi
-        ]);
+        $perjalanan->update(['kondisi_terakhir' => $request->kondisi]);
 
         return response()->json([
             'success' => true,
             'message' => 'Kondisi bus berhasil diperbarui',
-            'data' => $perjalanan
+            'data'    => $perjalanan
         ], 200);
     }
 
     /**
-     * UPDATE PENUMPANG - Update jumlah penumpang
+     * UPDATE PENUMPANG (current count saja — untuk sinkron DB)
      * POST /api/kru/perjalanan/penumpang
+     *
+     * Catatan: total_penumpang_naik TIDAK diupdate di sini.
+     * Akumulasi boarding dihitung di kru app via Firebase, lalu
+     * dikirim sekali saat selesaiPerjalanan dipanggil.
      */
     public function updatePenumpang(Request $request)
     {
         $request->validate([
-            'perjalanan_id' => 'required|exists:perjalanan,id',
+            'perjalanan_id'  => 'required|exists:perjalanan,id',
             'total_penumpang' => 'required|integer|min:0',
         ]);
 
@@ -190,28 +211,32 @@ class KruController extends Controller
             ], 404);
         }
 
-        $perjalanan->update([
-            'total_penumpang' => $request->total_penumpang
-        ]);
+        $perjalanan->update(['total_penumpang' => $request->total_penumpang]);
 
         return response()->json([
             'success' => true,
             'message' => 'Jumlah penumpang berhasil diperbarui',
-            'data' => $perjalanan
+            'data'    => $perjalanan
         ], 200);
     }
 
     /**
-     * SELESAI PERJALANAN - Akhiri perjalanan dan simpan laporan
+     * SELESAI PERJALANAN
      * POST /api/kru/perjalanan/selesai
+     *
+     * Perubahan dari versi lama:
+     * - Terima total_penumpang_naik (akumulasi dari Firebase totalPassengersBoarded)
+     * - Hitung total_pendapatan = total_penumpang_naik × tarif_snapshot
+     * - Response summary menambahkan info pendapatan
      */
     public function selesaiPerjalanan(Request $request)
     {
         $request->validate([
-            'perjalanan_id' => 'required|exists:perjalanan,id',
-            'total_penumpang' => 'required|integer|min:0',
-            'jarak_tempuh' => 'required|numeric|min:0',
-            'catatan' => 'nullable|string',
+            'perjalanan_id'       => 'required|exists:perjalanan,id',
+            'total_penumpang'     => 'required|integer|min:0',
+            'total_penumpang_naik' => 'required|integer|min:0',
+            'jarak_tempuh'        => 'required|numeric|min:0',
+            'catatan'             => 'nullable|string',
         ]);
 
         $perjalanan = Perjalanan::where('id', $request->perjalanan_id)
@@ -226,38 +251,45 @@ class KruController extends Controller
             ], 404);
         }
 
-        $waktuSelesai = now();
-        $durasiMenit = $perjalanan->waktu_mulai->diffInMinutes($waktuSelesai);
+        $waktuSelesai  = now();
+        $durasiMenit   = (int) $perjalanan->waktu_mulai->diffInMinutes($waktuSelesai);
+        $penumpangNaik = $request->total_penumpang_naik;
+        $tarifSnapshot = (float) ($perjalanan->tarif_snapshot ?? 0);
+        $totalPendapatan = $penumpangNaik * $tarifSnapshot;
 
         $perjalanan->update([
-            'waktu_selesai' => $waktuSelesai,
-            'total_penumpang' => $request->total_penumpang,
-            'jarak_tempuh' => $request->jarak_tempuh,
-            'durasi_menit' => $durasiMenit,
-            'status' => 'selesai',
-            'catatan' => $request->catatan,
+            'waktu_selesai'        => $waktuSelesai,
+            'total_penumpang'      => $request->total_penumpang,
+            'total_penumpang_naik' => $penumpangNaik,
+            'total_pendapatan'     => $totalPendapatan,
+            'jarak_tempuh'         => $request->jarak_tempuh,
+            'durasi_menit'         => $durasiMenit,
+            'status'               => 'selesai',
+            'catatan'              => $request->catatan,
         ]);
 
-        // Load relasi
         $perjalanan->load(['kru', 'armada', 'rute']);
 
         return response()->json([
             'success' => true,
             'message' => 'Perjalanan berhasil diselesaikan',
-            'data' => [
+            'data'    => [
                 'perjalanan' => $perjalanan,
-                'summary' => [
-                    'durasi_jam' => floor($durasiMenit / 60),
-                    'durasi_menit' => $durasiMenit % 60,
-                    'total_penumpang' => $perjalanan->total_penumpang,
-                    'jarak_km' => $perjalanan->jarak_tempuh,
+                'summary'    => [
+                    'durasi_jam'       => floor($durasiMenit / 60),
+                    'durasi_menit'     => $durasiMenit % 60,
+                    'total_penumpang'  => $perjalanan->total_penumpang,
+                    'penumpang_naik'   => $penumpangNaik,
+                    'jarak_km'         => $perjalanan->jarak_tempuh,
+                    'tarif_per_orang'  => $tarifSnapshot,
+                    'total_pendapatan' => $totalPendapatan,
                 ]
             ]
         ], 200);
     }
 
     /**
-     * GET PERJALANAN AKTIF - Cek apakah kru punya perjalanan aktif
+     * GET PERJALANAN AKTIF
      * GET /api/kru/perjalanan/aktif
      */
     public function getPerjalananAktif(Request $request)
@@ -271,19 +303,19 @@ class KruController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Tidak ada perjalanan aktif',
-                'data' => null
+                'data'    => null
             ], 200);
         }
 
         return response()->json([
             'success' => true,
             'message' => 'Data perjalanan aktif',
-            'data' => $perjalanan
+            'data'    => $perjalanan
         ], 200);
     }
 
     /**
-     * LOGOUT - Hapus token
+     * LOGOUT
      * POST /api/kru/logout
      */
     public function logout(Request $request)

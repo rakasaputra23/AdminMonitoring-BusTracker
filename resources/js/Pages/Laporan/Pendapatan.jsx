@@ -1,62 +1,74 @@
 import React, { useState } from 'react';
 import SimpleLayout from '@/Layouts/SimpleLayout';
 import { Head, router } from '@inertiajs/react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/Components/ui/Card';
+import { Badge } from '@/Components/ui/Badge';
+import { Input } from '@/Components/ui/Input';
 
-// ─── Helpers ──────────────────────────────────────────────
-const formatRupiah = (n) =>
-    'Rp ' + Number(n ?? 0).toLocaleString('id-ID');
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const fmt = (n) => 'Rp ' + Number(n ?? 0).toLocaleString('id-ID');
 
-const formatRupiahShort = (n) => {
+const fmtShort = (n) => {
     const num = Number(n ?? 0);
-    if (num >= 1_000_000) return `Rp ${(num / 1_000_000).toFixed(1)}jt`;
-    if (num >= 1_000)     return `Rp ${(num / 1_000).toFixed(0)}rb`;
-    return formatRupiah(num);
+    if (num >= 1_000_000_000) return `Rp ${(num / 1_000_000_000).toFixed(1)}M`;
+    if (num >= 1_000_000)     return `Rp ${(num / 1_000_000).toFixed(1)}jt`;
+    if (num >= 1_000)         return `Rp ${(num / 1_000).toFixed(0)}rb`;
+    return fmt(num);
 };
 
 const pct = (val, max) => (max > 0 ? Math.min(100, (val / max) * 100) : 0);
 
-// ─── Bar Chart (pure Tailwind, no library) ────────────────
-const BarChart = ({ data }) => {
-    const max = Math.max(...data.map(d => d.pendapatan), 1);
+const namaBulanStr = (bulan) =>
+    new Date(bulan + '-01').toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+
+// ─── Mini Bar Chart (pure Tailwind) ───────────────────────────────────────────
+function BarChart({ data }) {
+    const max = Math.max(...data.map((d) => d.pendapatan), 1);
     const last = data.length - 1;
     return (
-        <div className="flex items-end gap-1.5 h-36 w-full">
+        <div className="flex items-end gap-1.5 h-32 w-full pt-2">
             {data.map((d, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                    <span className="text-[10px] text-gray-400 leading-none">
-                        {formatRupiahShort(d.pendapatan)}
+                <div key={i} className="flex-1 flex flex-col items-center gap-1 group">
+                    <span className="text-[10px] text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                        {fmtShort(d.pendapatan)}
                     </span>
                     <div
                         className={`w-full rounded-t transition-all duration-500 ${
-                            i === last ? 'bg-blue-600' : 'bg-blue-200'
+                            i === last ? 'bg-blue-600' : 'bg-blue-200 group-hover:bg-blue-300'
                         }`}
                         style={{
                             height: `${pct(d.pendapatan, max)}%`,
                             minHeight: d.pendapatan > 0 ? '4px' : '0',
                         }}
-                        title={`${d.bulan}: ${formatRupiah(d.pendapatan)}`}
+                        title={`${d.bulan}: ${fmt(d.pendapatan)}`}
                     />
-                    <span className="text-[10px] text-gray-500 leading-none text-center w-full truncate">
+                    <span className="text-[10px] text-gray-500 text-center w-full truncate">
                         {d.bulan}
                     </span>
                 </div>
             ))}
         </div>
     );
-};
+}
 
-// ─── Daily Bar ────────────────────────────────────────────
-const DailyChart = ({ data }) => {
+// ─── Daily Bars ────────────────────────────────────────────────────────────────
+function DailyChart({ data }) {
     if (!data?.length) {
-        return <p className="text-sm text-gray-500 text-center py-8">Tidak ada data harian</p>;
+        return (
+            <p className="text-sm text-gray-500 text-center py-8">
+                Tidak ada data harian untuk bulan ini.
+            </p>
+        );
     }
-    const max = Math.max(...data.map(d => d.pendapatan), 1);
+    const max = Math.max(...data.map((d) => d.pendapatan), 1);
     return (
         <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
             {data.map((d, i) => (
                 <div key={i} className="flex items-center gap-3 text-sm">
-                    <span className="text-gray-500 w-20 flex-shrink-0 text-xs">
-                        {new Date(d.tanggal).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+                    <span className="text-gray-500 w-16 flex-shrink-0 text-xs">
+                        {new Date(d.tanggal).toLocaleDateString('id-ID', {
+                            day: 'numeric', month: 'short',
+                        })}
                     </span>
                     <div className="flex-1 h-4 bg-gray-100 rounded-full overflow-hidden">
                         <div
@@ -65,7 +77,7 @@ const DailyChart = ({ data }) => {
                         />
                     </div>
                     <span className="text-gray-700 font-medium w-24 text-right text-xs">
-                        {formatRupiahShort(d.pendapatan)}
+                        {fmtShort(d.pendapatan)}
                     </span>
                     <span className="text-gray-400 w-12 text-right text-xs">
                         {d.penumpang} org
@@ -74,9 +86,9 @@ const DailyChart = ({ data }) => {
             ))}
         </div>
     );
-};
+}
 
-// ─── Main ─────────────────────────────────────────────────
+// ─── Main ──────────────────────────────────────────────────────────────────────
 export default function Pendapatan({ auth, perRute, trend, perHari, stats, bulan }) {
     const [activeBulan, setActiveBulan] = useState(bulan);
 
@@ -89,9 +101,10 @@ export default function Pendapatan({ auth, perRute, trend, perHari, stats, bulan
         });
     };
 
-    const totalPendapatan    = stats.total_pendapatan;
-    const maxRutePendapatan  = perRute.length ? Math.max(...perRute.map(r => r.pendapatan)) : 1;
-    const namaBulan = new Date(activeBulan + '-01').toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+    const totalPendapatan   = stats.total_pendapatan;
+    const maxRutePendapatan = perRute.length
+        ? Math.max(...perRute.map((r) => r.pendapatan))
+        : 1;
 
     return (
         <SimpleLayout user={auth.user} pageTitle="Laporan Pendapatan">
@@ -99,140 +112,144 @@ export default function Pendapatan({ auth, perRute, trend, perHari, stats, bulan
 
             <div className="space-y-6">
 
-                {/* ── Header ── */}
-                <div className="flex justify-between items-center">
+                {/* ── Header ────────────────────────────────────────────── */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">Laporan Pendapatan</h1>
                         <p className="text-sm text-gray-600 mt-1">
-                            Akumulasi pendapatan berdasarkan rute dan jumlah penumpang
+                            Akumulasi pendapatan berdasarkan rute dan penumpang
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
-                        <label className="text-sm text-gray-600">Bulan:</label>
+                        <label className="text-sm text-gray-600 shrink-0">Bulan:</label>
                         <input
                             type="month"
                             value={activeBulan}
                             onChange={handleBulanChange}
-                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                         />
                     </div>
                 </div>
 
-                {/* ── Stat Cards ── */}
+                {/* ── Stat Cards ────────────────────────────────────────── */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    {[
-                        {
-                            label: 'Total Pendapatan',
-                            value: formatRupiahShort(stats.total_pendapatan),
-                            sub: formatRupiah(stats.total_pendapatan),
-                            iconBg: 'from-green-400 to-green-600',
-                            icon: (
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                            ),
-                            growth: stats.growth,
-                        },
-                        {
-                            label: 'Total Penumpang',
-                            value: stats.total_penumpang.toLocaleString('id-ID'),
-                            sub: 'penumpang bulan ini',
-                            iconBg: 'from-blue-400 to-blue-600',
-                            icon: (
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                                </svg>
-                            ),
-                        },
-                        {
-                            label: 'Total Trip',
-                            value: stats.total_trip.toLocaleString('id-ID'),
-                            sub: 'perjalanan selesai',
-                            iconBg: 'from-purple-400 to-purple-600',
-                            icon: (
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 17l.01 0M16 17l.01 0M5 7h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2zm0 0V5a2 2 0 012-2h10a2 2 0 012 2v2M9 17a1 1 0 100-2 1 1 0 000 2zm6 0a1 1 0 100-2 1 1 0 000 2z" />
-                                </svg>
-                            ),
-                        },
-                        {
-                            label: 'Rata-rata / Trip',
-                            value: formatRupiahShort(stats.rata_per_trip),
-                            sub: `≈ ${stats.rata_penumpang} penumpang/trip`,
-                            iconBg: 'from-orange-400 to-orange-500',
-                            icon: (
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                                </svg>
-                            ),
-                        },
-                    ].map((card, i) => (
-                        <div key={i} className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${card.iconBg} flex items-center justify-center text-white flex-shrink-0`}>
-                                {card.icon}
+                    <Card className="border-l-4 border-l-green-600">
+                        <CardHeader className="flex flex-row items-center justify-between pb-2">
+                            <CardTitle className="text-xs font-medium text-slate-600 uppercase tracking-wider">
+                                Total Pendapatan
+                            </CardTitle>
+                            {stats.growth !== undefined && stats.growth !== null && (
+                                <Badge className={stats.growth >= 0 ? 'bg-green-500' : 'bg-red-500'}>
+                                    {stats.growth >= 0 ? '↑' : '↓'}{Math.abs(stats.growth)}%
+                                </Badge>
+                            )}
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold text-green-600">
+                                {fmtShort(stats.total_pendapatan)}
                             </div>
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-start justify-between gap-1">
-                                    <p className="text-xs text-gray-500">{card.label}</p>
-                                    {card.growth !== undefined && card.growth !== null && (
-                                        <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full flex-shrink-0 ${
-                                            card.growth >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                        }`}>
-                                            {card.growth >= 0 ? '↑' : '↓'}{Math.abs(card.growth)}%
-                                        </span>
-                                    )}
-                                </div>
-                                <p className="text-2xl font-bold text-gray-900 leading-tight">{card.value}</p>
-                                {card.sub && <p className="text-xs text-gray-400 truncate">{card.sub}</p>}
+                            <p className="text-xs text-slate-500 mt-1">{fmt(stats.total_pendapatan)}</p>
+                        </CardContent>
+                    </Card>
+
+                    <Card className="border-l-4 border-l-blue-600">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-xs font-medium text-slate-600 uppercase tracking-wider">
+                                Total Penumpang
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold text-blue-600">
+                                {stats.total_penumpang.toLocaleString('id-ID')}
                             </div>
-                        </div>
-                    ))}
+                            <p className="text-xs text-slate-500 mt-1">penumpang bulan ini</p>
+                        </CardContent>
+                    </Card>
+
+                    <Card className="border-l-4 border-l-purple-600">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-xs font-medium text-slate-600 uppercase tracking-wider">
+                                Total Trip
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold text-purple-600">
+                                {stats.total_trip.toLocaleString('id-ID')}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1">perjalanan selesai</p>
+                        </CardContent>
+                    </Card>
+
+                    <Card className="border-l-4 border-l-orange-500">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-xs font-medium text-slate-600 uppercase tracking-wider">
+                                Rata-rata / Trip
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-2xl font-bold text-orange-500">
+                                {fmtShort(stats.rata_per_trip)}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1">
+                                ≈ {stats.rata_penumpang} penumpang/trip
+                            </p>
+                        </CardContent>
+                    </Card>
                 </div>
 
-                {/* ── Charts Row ── */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* ── Charts Row ────────────────────────────────────────── */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-                    {/* Tren 6 Bulan */}
-                    <div className="bg-white rounded-lg border border-gray-200 p-4">
-                        <div className="mb-4">
-                            <h2 className="font-semibold text-gray-900">Tren Pendapatan</h2>
-                            <p className="text-sm text-gray-600 mt-0.5">6 bulan terakhir</p>
-                        </div>
-                        {trend.length > 0 ? (
-                            <>
-                                <BarChart data={trend} />
-                                {/* Mini tabel tren */}
-                                <div className="mt-4 divide-y divide-gray-100">
-                                    {trend.map((t, i) => (
-                                        <div key={i} className="flex justify-between items-center py-1.5 text-xs">
-                                            <span className="text-gray-500">{t.bulan}</span>
-                                            <span className="text-gray-400">{t.trip} trip · {t.penumpang.toLocaleString('id-ID')} org</span>
-                                            <span className="font-medium text-gray-800">{formatRupiahShort(t.pendapatan)}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </>
-                        ) : (
-                            <p className="text-sm text-gray-500 text-center py-10">Belum ada data</p>
-                        )}
-                    </div>
+                    <Card>
+                        <CardHeader className="border-b bg-slate-50">
+                            <CardTitle className="text-base font-semibold">Tren Pendapatan</CardTitle>
+                            <CardDescription className="text-xs mt-0.5">6 bulan terakhir</CardDescription>
+                        </CardHeader>
+                        <CardContent className="p-4">
+                            {trend.length > 0 ? (
+                                <>
+                                    <BarChart data={trend} />
+                                    <div className="mt-4 divide-y divide-gray-100">
+                                        {trend.map((t, i) => (
+                                            <div key={i} className="flex justify-between items-center py-1.5 text-xs">
+                                                <span className="text-gray-500">{t.bulan}</span>
+                                                <span className="text-gray-400">
+                                                    {t.trip} trip · {t.penumpang.toLocaleString('id-ID')} org
+                                                </span>
+                                                <span className="font-semibold text-gray-800">
+                                                    {fmtShort(t.pendapatan)}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
+                            ) : (
+                                <p className="text-sm text-gray-500 text-center py-10">Belum ada data</p>
+                            )}
+                        </CardContent>
+                    </Card>
 
-                    {/* Pendapatan Harian */}
-                    <div className="bg-white rounded-lg border border-gray-200 p-4">
-                        <div className="mb-4">
-                            <h2 className="font-semibold text-gray-900">Pendapatan Harian</h2>
-                            <p className="text-sm text-gray-600 mt-0.5">{namaBulan}</p>
-                        </div>
-                        <DailyChart data={perHari} />
-                    </div>
+                    <Card>
+                        <CardHeader className="border-b bg-slate-50">
+                            <CardTitle className="text-base font-semibold">Pendapatan Harian</CardTitle>
+                            <CardDescription className="text-xs mt-0.5">
+                                {namaBulanStr(activeBulan)}
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="p-4">
+                            <DailyChart data={perHari} />
+                        </CardContent>
+                    </Card>
                 </div>
 
-                {/* ── Tabel Per Rute ── */}
+                {/* ── Tabel Per Rute ────────────────────────────────────── */}
                 <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                    <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                    <div className="px-6 py-4 border-b border-gray-200 bg-slate-50 flex justify-between items-center">
                         <div>
-                            <h2 className="font-semibold text-gray-900">Pendapatan Per Rute</h2>
-                            <p className="text-sm text-gray-600 mt-0.5">{namaBulan} · {perRute.length} rute</p>
+                            <h2 className="text-base font-semibold text-gray-900">Pendapatan Per Rute</h2>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                                {namaBulanStr(activeBulan)} · {perRute.length} rute
+                            </p>
                         </div>
                     </div>
 
@@ -242,10 +259,10 @@ export default function Pendapatan({ auth, perRute, trend, perHari, stats, bulan
                                 <tr>
                                     <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">#</th>
                                     <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Rute</th>
-                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Harga/Tiket</th>
-                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Trip</th>
-                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Penumpang</th>
-                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kontribusi</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Harga / Tiket</th>
+                                    <th className="px-6 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Trip</th>
+                                    <th className="px-6 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Penumpang</th>
+                                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider min-w-[160px]">Kontribusi</th>
                                     <th className="px-6 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Total Pendapatan</th>
                                 </tr>
                             </thead>
@@ -263,11 +280,9 @@ export default function Pendapatan({ auth, perRute, trend, perHari, stats, bulan
                                             : 0;
                                         return (
                                             <tr key={item.rute_id} className="hover:bg-gray-50 transition-colors">
-                                                {/* Rank */}
                                                 <td className="px-6 py-4 text-gray-400 text-sm font-medium">
                                                     {idx + 1}
                                                 </td>
-                                                {/* Rute */}
                                                 <td className="px-6 py-4">
                                                     <div className="flex items-center gap-3">
                                                         <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-white flex-shrink-0">
@@ -276,27 +291,21 @@ export default function Pendapatan({ auth, perRute, trend, perHari, stats, bulan
                                                             </svg>
                                                         </div>
                                                         <div>
-                                                            <span className="font-medium text-gray-900">{item.rute?.nama_rute ?? '-'}</span>
+                                                            <p className="font-medium text-gray-900">{item.nama_rute ?? '-'}</p>
                                                             <p className="text-xs text-gray-500">
-                                                                {item.rute?.kota_asal} → {item.rute?.kota_tujuan}
+                                                                {item.kota_asal} → {item.kota_tujuan}
                                                             </p>
                                                         </div>
                                                     </div>
                                                 </td>
-                                                {/* Harga */}
-                                                <td className="px-6 py-4 text-gray-900">
-                                                    {formatRupiah(item.harga)}
-                                                </td>
-                                                {/* Trip */}
-                                                <td className="px-6 py-4 text-gray-900">
+                                                <td className="px-6 py-4 text-gray-900 text-sm">{fmt(item.harga)}</td>
+                                                <td className="px-6 py-4 text-gray-900 text-sm text-center">
                                                     {item.total_trip} trip
                                                 </td>
-                                                {/* Penumpang */}
-                                                <td className="px-6 py-4 text-gray-900">
-                                                    {Number(item.total_penumpang).toLocaleString('id-ID')} orang
+                                                <td className="px-6 py-4 text-gray-900 text-sm text-center">
+                                                    {Number(item.total_penumpang).toLocaleString('id-ID')} org
                                                 </td>
-                                                {/* Kontribusi */}
-                                                <td className="px-6 py-4 min-w-[160px]">
+                                                <td className="px-6 py-4">
                                                     <div className="flex items-center gap-2">
                                                         <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
                                                             <div
@@ -309,13 +318,12 @@ export default function Pendapatan({ auth, perRute, trend, perHari, stats, bulan
                                                         </span>
                                                     </div>
                                                 </td>
-                                                {/* Pendapatan */}
                                                 <td className="px-6 py-4 text-right">
                                                     <span className="font-semibold text-green-700">
-                                                        {formatRupiah(item.pendapatan)}
+                                                        {fmt(item.pendapatan)}
                                                     </span>
                                                     <p className="text-xs text-gray-400 mt-0.5">
-                                                        ≈ {formatRupiahShort(item.total_trip > 0 ? Math.round(item.pendapatan / item.total_trip) : 0)}/trip
+                                                        ≈ {fmtShort(item.total_trip > 0 ? Math.round(item.pendapatan / item.total_trip) : 0)}/trip
                                                     </p>
                                                 </td>
                                             </tr>
@@ -323,26 +331,24 @@ export default function Pendapatan({ auth, perRute, trend, perHari, stats, bulan
                                     })
                                 )}
                             </tbody>
-
-                            {/* Footer Total */}
                             {perRute.length > 0 && (
                                 <tfoot className="bg-gray-50 border-t-2 border-gray-200">
                                     <tr>
                                         <td colSpan={3} className="px-6 py-4 text-sm font-semibold text-gray-700">
                                             Total Bulan Ini
                                         </td>
-                                        <td className="px-6 py-4 text-gray-900 font-semibold">
+                                        <td className="px-6 py-4 text-gray-900 font-semibold text-center">
                                             {perRute.reduce((s, r) => s + r.total_trip, 0)} trip
                                         </td>
-                                        <td className="px-6 py-4 text-gray-900 font-semibold">
-                                            {perRute.reduce((s, r) => s + Number(r.total_penumpang), 0).toLocaleString('id-ID')} orang
+                                        <td className="px-6 py-4 text-gray-900 font-semibold text-center">
+                                            {perRute.reduce((s, r) => s + Number(r.total_penumpang), 0).toLocaleString('id-ID')} org
                                         </td>
                                         <td className="px-6 py-4">
                                             <span className="text-xs text-gray-400">100%</span>
                                         </td>
                                         <td className="px-6 py-4 text-right">
                                             <span className="font-bold text-green-700 text-lg">
-                                                {formatRupiah(totalPendapatan)}
+                                                {fmt(totalPendapatan)}
                                             </span>
                                         </td>
                                     </tr>
@@ -352,15 +358,16 @@ export default function Pendapatan({ auth, perRute, trend, perHari, stats, bulan
                     </div>
                 </div>
 
-                {/* ── Info Box ── */}
+                {/* ── Info Box ──────────────────────────────────────────── */}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <div className="flex items-start gap-3">
-                        <svg className="w-5 h-5 text-blue-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-5 h-5 text-blue-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                         <p className="text-sm text-blue-700">
-                            Pendapatan dihitung dari <strong>harga tiket per rute × total penumpang</strong> pada setiap perjalanan berstatus <em>selesai</em>.
-                            Atur harga tiket di menu <strong>Data Master → Rute</strong>.
+                            Pendapatan dihitung dari <strong>harga tiket × total penumpang naik</strong> pada
+                            setiap perjalanan berstatus <em>selesai</em>. Atur harga di{' '}
+                            <strong>Data Master → Tarif</strong>.
                         </p>
                     </div>
                 </div>
