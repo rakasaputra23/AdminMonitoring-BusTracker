@@ -19,7 +19,7 @@ class LaporanRiwayatController extends Controller
         if ($request->filled('search')) {
             $s = $request->input('search');
             $query->where(function ($q) use ($s) {
-                $q->whereHas('kru',    fn ($sq) => $sq->where('driver',     'like', "%{$s}%"))
+                $q->whereHas('kru',    fn ($sq) => $sq->where('driver',      'like', "%{$s}%"))
                   ->orWhereHas('armada', fn ($sq) => $sq->where('nama_bus',   'like', "%{$s}%")
                                                         ->orWhere('plat_nomor', 'like', "%{$s}%"));
             });
@@ -48,9 +48,14 @@ class LaporanRiwayatController extends Controller
         // ── Paginate ─────────────────────────────────────────────────────
         $perjalanan = $query->paginate(15)->withQueryString();
 
-        // Tambah alias pendapatan supaya konsisten di frontend
+        // Normalise field untuk frontend
         $perjalanan->getCollection()->transform(function ($item) {
-            $item->pendapatan = (float) $item->total_pendapatan;
+            $item->pendapatan      = (float) $item->total_pendapatan;
+            $item->total_penumpang = (int)   $item->total_penumpang_naik;
+
+            // ✅ gps_track sudah di-cast sebagai array oleh model
+            $item->gps_track = $item->gps_track ?? null;
+
             return $item;
         });
 
@@ -68,13 +73,15 @@ class LaporanRiwayatController extends Controller
             ->get(['id', 'nama_rute']);
 
         return Inertia::render('Laporan/Riwayat', [
-            'perjalanan' => $perjalanan,
-            'ruteList'   => $ruteList,
-            'stats'      => $stats,
-            'filters'    => $request->only([
+            'perjalanan'       => $perjalanan,
+            'ruteList'         => $ruteList,
+            'stats'            => $stats,
+            'filters'          => $request->only([
                 'search', 'status', 'kondisi',
                 'rute_id', 'tanggal_dari', 'tanggal_sampai',
             ]),
+            // ✅ FIX: kirim API key ke frontend
+            'googleMapsApiKey' => config('services.google_maps.api_key'),
         ]);
     }
 }

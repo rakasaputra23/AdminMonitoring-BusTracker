@@ -3,23 +3,26 @@ import SimpleLayout from '@/Layouts/SimpleLayout';
 import { Head, router } from '@inertiajs/react';
 
 export default function Armada({ auth, armada, filters }) {
-  const [showModal, setShowModal]             = useState(false);
-  const [editMode, setEditMode]               = useState(false);
-  const [currentArmada, setCurrentArmada]     = useState(null);
+  const [showModal, setShowModal]                 = useState(false);
+  const [editMode, setEditMode]                   = useState(false);
+  const [currentArmada, setCurrentArmada]         = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [armadaToDelete, setArmadaToDelete]   = useState(null);
-  const [errors, setErrors]                   = useState({});
+  const [armadaToDelete, setArmadaToDelete]       = useState(null);
+  const [errors, setErrors]                       = useState({});
 
-  const [formData, setFormData] = useState({
-    nama_bus   : '',
-    plat_nomor : '',
-    kelas      : 'Ekonomi',
-    kapasitas  : '',
-    status     : 'aktif',
-  });
+  const emptyForm = {
+    nama_bus        : '',
+    plat_nomor      : '',
+    kelas           : 'Ekonomi',
+    kapasitas       : '',
+    status          : 'aktif',
+    firebase_bus_id : '', // ✅ TAMBAH
+  };
+
+  const [formData, setFormData] = useState(emptyForm);
 
   const [searchTerm, setSearchTerm]     = useState(filters?.search || '');
-  const [kelasFilter, setKelasFilter]   = useState(filters?.kelas || '');
+  const [kelasFilter, setKelasFilter]   = useState(filters?.kelas  || '');
   const [statusFilter, setStatusFilter] = useState(filters?.status || '');
 
   // ── Modal ──────────────────────────────────────────────────────────
@@ -30,16 +33,17 @@ export default function Armada({ auth, armada, filters }) {
       setEditMode(true);
       setCurrentArmada(item);
       setFormData({
-        nama_bus   : item.nama_bus,
-        plat_nomor : item.plat_nomor,
-        kelas      : item.kelas,
-        kapasitas  : item.kapasitas,
-        status     : item.status,
+        nama_bus        : item.nama_bus,
+        plat_nomor      : item.plat_nomor,
+        kelas           : item.kelas,
+        kapasitas       : item.kapasitas,
+        status          : item.status,
+        firebase_bus_id : item.firebase_bus_id ?? '', // ✅ TAMBAH
       });
     } else {
       setEditMode(false);
       setCurrentArmada(null);
-      setFormData({ nama_bus: '', plat_nomor: '', kelas: 'Ekonomi', kapasitas: '', status: 'aktif' });
+      setFormData(emptyForm);
     }
     setShowModal(true);
   };
@@ -49,7 +53,7 @@ export default function Armada({ auth, armada, filters }) {
     setEditMode(false);
     setCurrentArmada(null);
     setErrors({});
-    setFormData({ nama_bus: '', plat_nomor: '', kelas: 'Ekonomi', kapasitas: '', status: 'aktif' });
+    setFormData(emptyForm);
   };
 
   // ── Submit ─────────────────────────────────────────────────────────
@@ -91,10 +95,10 @@ export default function Armada({ auth, armada, filters }) {
 
   const handleSearch = (e) => {
     e.preventDefault();
-    router.get('/data-master/armada', { search: searchTerm, kelas: kelasFilter, status: statusFilter }, {
-      preserveState  : true,
-      preserveScroll : true,
-    });
+    router.get('/data-master/armada',
+      { search: searchTerm, kelas: kelasFilter, status: statusFilter },
+      { preserveState: true, preserveScroll: true }
+    );
   };
 
   const resetFilters = () => {
@@ -208,6 +212,7 @@ export default function Armada({ auth, armada, filters }) {
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Plat Nomor</th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kelas</th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kapasitas</th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Firebase ID</th>{/* ✅ TAMBAH */}
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
                 </tr>
@@ -215,13 +220,14 @@ export default function Armada({ auth, armada, filters }) {
               <tbody className="divide-y divide-gray-200">
                 {armada.data.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan="7" className="px-6 py-12 text-center text-gray-500">
                       Tidak ada data armada
                     </td>
                   </tr>
                 ) : (
                   armada.data.map((item) => (
                     <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+
                       {/* Nama Bus */}
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
@@ -233,18 +239,21 @@ export default function Armada({ auth, armada, filters }) {
                           <span className="font-medium text-gray-900">{item.nama_bus}</span>
                         </div>
                       </td>
+
                       {/* Plat */}
                       <td className="px-6 py-4">
                         <span className="font-mono text-sm text-gray-900 bg-gray-100 px-2 py-1 rounded">
                           {item.plat_nomor}
                         </span>
                       </td>
+
                       {/* Kelas */}
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getKelasBadge(item.kelas)}`}>
                           {item.kelas}
                         </span>
                       </td>
+
                       {/* Kapasitas */}
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
@@ -254,12 +263,27 @@ export default function Armada({ auth, armada, filters }) {
                           <span className="text-gray-900 font-medium">{item.kapasitas} seat</span>
                         </div>
                       </td>
+
+                      {/* ✅ TAMBAH: Firebase Bus ID */}
+                      <td className="px-6 py-4">
+                        {item.firebase_bus_id ? (
+                          <span className="font-mono text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded">
+                            {item.firebase_bus_id}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-red-500 bg-red-50 border border-red-200 px-2 py-1 rounded">
+                            Belum diset
+                          </span>
+                        )}
+                      </td>
+
                       {/* Status */}
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getStatusBadge(item.status)}`}>
                           {getStatusLabel(item.status)}
                         </span>
                       </td>
+
                       {/* Aksi */}
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -323,10 +347,10 @@ export default function Armada({ auth, armada, filters }) {
       ══════════════════════════════════════════════════════════ */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
 
             {/* Header */}
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
               <h2 className="text-lg font-semibold text-gray-900">
                 {editMode ? 'Edit Armada' : 'Tambah Armada'}
               </h2>
@@ -414,7 +438,9 @@ export default function Armada({ auth, armada, filters }) {
 
               {/* Status */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Status <span className="text-red-500">*</span>
+                </label>
                 <select
                   value={formData.status}
                   onChange={(e) => setFormData({ ...formData, status: e.target.value })}
@@ -425,6 +451,30 @@ export default function Armada({ auth, armada, filters }) {
                   <option value="nonaktif">Nonaktif</option>
                   <option value="maintenance">Maintenance</option>
                 </select>
+              </div>
+
+              {/* ✅ TAMBAH: Firebase Bus ID */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Firebase Bus ID
+                  <span className="ml-1 text-xs text-gray-400 font-normal">(opsional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.firebase_bus_id}
+                  onChange={(e) => setFormData({ ...formData, firebase_bus_id: e.target.value })}
+                  placeholder="Contoh: STJ-Express-01"
+                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm ${
+                    errors.firebase_bus_id ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                  }`}
+                />
+                {errors.firebase_bus_id ? (
+                  <p className="text-red-600 text-xs mt-1">{errors.firebase_bus_id}</p>
+                ) : (
+                  <p className="text-gray-400 text-xs mt-1">
+                    ID unik untuk integrasi Firebase Realtime Database. Gunakan format tanpa spasi, contoh: <span className="font-mono">STJ-Express-01</span>
+                  </p>
+                )}
               </div>
 
               {/* Footer Buttons */}

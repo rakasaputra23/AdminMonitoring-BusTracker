@@ -27,6 +27,7 @@ class Perjalanan extends Model
         'status',
         'kondisi_terakhir',
         'catatan',
+        'gps_track',          // ← kolom baru: jalur GPS aktual dari Firebase
     ];
 
     protected $casts = [
@@ -38,6 +39,7 @@ class Perjalanan extends Model
         'total_penumpang'      => 'integer',
         'total_penumpang_naik' => 'integer',
         'durasi_menit'         => 'integer',
+        'gps_track'            => 'array',   // ← otomatis encode/decode JSON
     ];
 
     // ──────────────────────────────────────────
@@ -73,17 +75,11 @@ class Perjalanan extends Model
         return $query->where('perjalanan.status', 'selesai');
     }
 
-    /**
-     * Filter rentang tanggal berdasarkan waktu_mulai.
-     */
     public function scopePeriode(Builder $query, string $dari, string $sampai): Builder
     {
         return $query->whereBetween('waktu_mulai', [$dari, $sampai]);
     }
 
-    /**
-     * Filter bulan dan tahun tertentu.
-     */
     public function scopeBulan(Builder $query, int $bulan, int $tahun): Builder
     {
         return $query->whereYear('waktu_mulai', $tahun)
@@ -94,27 +90,16 @@ class Perjalanan extends Model
     // Query Helpers untuk Laporan
     // ──────────────────────────────────────────
 
-    /**
-     * Total pendapatan semua perjalanan selesai dalam rentang tanggal.
-     */
     public static function totalPendapatanPeriode(string $dari, string $sampai): float
     {
         return (float) static::selesai()->periode($dari, $sampai)->sum('total_pendapatan');
     }
 
-    /**
-     * Total penumpang naik dalam rentang tanggal.
-     */
     public static function totalPenumpangPeriode(string $dari, string $sampai): int
     {
         return (int) static::selesai()->periode($dari, $sampai)->sum('total_penumpang_naik');
     }
 
-    /**
-     * Pendapatan per hari — untuk chart laporan.
-     *
-     * @return \Illuminate\Support\Collection
-     */
     public static function pendapatanPerHari(string $dari, string $sampai)
     {
         return static::selesai()
@@ -128,11 +113,6 @@ class Perjalanan extends Model
             ->get();
     }
 
-    /**
-     * Pendapatan per bulan dalam satu tahun.
-     *
-     * @return \Illuminate\Support\Collection
-     */
     public static function pendapatanPerBulan(int $tahun)
     {
         return static::selesai()
@@ -146,11 +126,6 @@ class Perjalanan extends Model
             ->get();
     }
 
-    /**
-     * Pendapatan per rute dalam rentang tanggal.
-     *
-     * @return \Illuminate\Support\Collection
-     */
     public static function pendapatanPerRute(string $dari, string $sampai)
     {
         return static::selesai()

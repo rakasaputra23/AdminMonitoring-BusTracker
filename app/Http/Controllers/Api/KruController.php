@@ -10,9 +10,84 @@ use App\Models\Tarif;
 use App\Models\Perjalanan;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class KruController extends Controller
 {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helper: Ambil track history dari Firebase RTDB
+    // Node: buses/{firebase_bus_id}/track
+    // Format di RTDB: { "-NxABC": { lat: -7.6, lng: 111.5, timestamp: 1700000 }, ... }
+    // Output: [ { lat, lng, timestamp }, ... ] urut berdasarkan timestamp
+    // ─────────────────────────────────────────────────────────────────────────
+    private function fetchGpsTrackFromFirebase(string $firebaseBusId): array
+    {
+        try {
+            $databaseUrl = rtrim(config('services.firebase.database_url'), '/');
+            $secret      = config('services.firebase.secret'); // legacy secret / service account token
+
+            $url = "{$databaseUrl}/buses/{$firebaseBusId}/track.json";
+
+            $response = Http::timeout(10)
+                ->get($url, $secret ? ['auth' => $secret] : []);
+
+            if (!$response->successful()) {
+                Log::warning("Firebase track fetch failed for bus {$firebaseBusId}", [
+                    'status' => $response->status(),
+                    'body'   => $response->body(),
+                ]);
+                return [];
+            }
+
+            $raw = $response->json();
+
+            if (!is_array($raw) || empty($raw)) {
+                return [];
+            }
+
+            // Konversi object Firebase ke array flat, lalu sort by timestamp
+            $points = array_values($raw);
+
+            usort($points, fn ($a, $b) => ($a['timestamp'] ?? 0) <=> ($b['timestamp'] ?? 0));
+
+            // Pastikan hanya field yang diperlukan
+            return array_map(fn ($p) => [
+                'lat'       => (float) ($p['lat']       ?? 0),
+                'lng'       => (float) ($p['lng']       ?? 0),
+                'timestamp' => (int)   ($p['timestamp'] ?? 0),
+            ], $points);
+
+        } catch (\Throwable $e) {
+            Log::error("Exception saat fetch GPS track dari Firebase: " . $e->getMessage(), [
+                'firebase_bus_id' => $firebaseBusId,
+            ]);
+            return [];
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helper: Hapus node track di Firebase setelah disimpan ke MySQL
+    // ─────────────────────────────────────────────────────────────────────────
+    private function clearFirebaseTrack(string $firebaseBusId): void
+    {
+        try {
+            $databaseUrl = rtrim(config('services.firebase.database_url'), '/');
+            $secret      = config('services.firebase.secret');
+
+            $url = "{$databaseUrl}/buses/{$firebaseBusId}/track.json";
+
+            Http::timeout(5)
+                ->delete($url, $secret ? ['auth' => $secret] : []);
+
+        } catch (\Throwable $e) {
+            Log::warning("Gagal clear Firebase track untuk bus {$firebaseBusId}: " . $e->getMessage());
+            // Non-fatal — tidak perlu throw
+        }
+    }
+
+    // =========================================================================
+
     /**
      * LOGIN
      * POST /api/kru/login
@@ -29,14 +104,14 @@ class KruController extends Controller
         if (!$kru || !Hash::check($request->password, $kru->password)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Username atau password salah'
+                'message' => 'Username atau password salah',
             ], 401);
         }
 
         if ($kru->status !== 'aktif') {
             return response()->json([
                 'success' => false,
-                'message' => 'Akun Anda tidak aktif. Hubungi admin.'
+                'message' => 'Akun Anda tidak aktif. Hubungi admin.',
             ], 403);
         }
 
@@ -45,15 +120,15 @@ class KruController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Login berhasil',
-            'data' => [
+            'data'    => [
                 'kru' => [
                     'id'       => $kru->id,
                     'driver'   => $kru->driver,
                     'username' => $kru->username,
                     'status'   => $kru->status,
                 ],
-                'token' => $token
-            ]
+                'token' => $token,
+            ],
         ], 200);
     }
 
@@ -71,7 +146,7 @@ class KruController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Data armada berhasil diambil',
-            'data'    => $armada
+            'data'    => $armada,
         ], 200);
     }
 
@@ -89,18 +164,13 @@ class KruController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Data rute berhasil diambil',
-            'data'    => $rute
+            'data'    => $rute,
         ], 200);
     }
 
     /**
      * MULAI PERJALANAN
      * POST /api/kru/perjalanan/mulai
-     *
-     * Perubahan dari versi lama:
-     * - Ambil tarif aktif untuk rute yang dipilih → simpan ke tarif_snapshot
-     * - Response mengembalikan firebase_bus_id dan perjalanan_id agar kru app
-     *   bisa set activePerjalananId + reset totalPassengersBoarded di Firebase
      */
     public function mulaiPerjalanan(Request $request)
     {
@@ -116,11 +186,10 @@ class KruController extends Controller
         if ($perjalananAktif) {
             return response()->json([
                 'success' => false,
-                'message' => 'Anda masih memiliki perjalanan yang belum diselesaikan'
+                'message' => 'Anda masih memiliki perjalanan yang belum diselesaikan',
             ], 400);
         }
 
-        // Ambil tarif aktif untuk rute ini — disimpan sebagai snapshot
         $tarif = Tarif::where('rute_id', $request->rute_id)
             ->where('status', 'aktif')
             ->first();
@@ -137,8 +206,6 @@ class KruController extends Controller
 
         $perjalanan->load(['kru', 'armada', 'rute']);
 
-        // firebase_bus_id dikirim balik ke kru app agar app tahu
-        // node Firebase mana yang harus diupdate (set activePerjalananId)
         $firebaseBusId = $perjalanan->armada->firebase_bus_id;
 
         return response()->json([
@@ -148,7 +215,7 @@ class KruController extends Controller
                 'perjalanan'      => $perjalanan,
                 'firebase_bus_id' => $firebaseBusId,
                 'tarif_berlaku'   => $tarif?->harga,
-            ]
+            ],
         ], 201);
     }
 
@@ -171,7 +238,7 @@ class KruController extends Controller
         if (!$perjalanan) {
             return response()->json([
                 'success' => false,
-                'message' => 'Perjalanan tidak ditemukan atau sudah selesai'
+                'message' => 'Perjalanan tidak ditemukan atau sudah selesai',
             ], 404);
         }
 
@@ -180,22 +247,18 @@ class KruController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Kondisi bus berhasil diperbarui',
-            'data'    => $perjalanan
+            'data'    => $perjalanan,
         ], 200);
     }
 
     /**
-     * UPDATE PENUMPANG (current count saja — untuk sinkron DB)
+     * UPDATE PENUMPANG
      * POST /api/kru/perjalanan/penumpang
-     *
-     * Catatan: total_penumpang_naik TIDAK diupdate di sini.
-     * Akumulasi boarding dihitung di kru app via Firebase, lalu
-     * dikirim sekali saat selesaiPerjalanan dipanggil.
      */
     public function updatePenumpang(Request $request)
     {
         $request->validate([
-            'perjalanan_id'  => 'required|exists:perjalanan,id',
+            'perjalanan_id'   => 'required|exists:perjalanan,id',
             'total_penumpang' => 'required|integer|min:0',
         ]);
 
@@ -207,7 +270,7 @@ class KruController extends Controller
         if (!$perjalanan) {
             return response()->json([
                 'success' => false,
-                'message' => 'Perjalanan tidak ditemukan atau sudah selesai'
+                'message' => 'Perjalanan tidak ditemukan atau sudah selesai',
             ], 404);
         }
 
@@ -216,7 +279,7 @@ class KruController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Jumlah penumpang berhasil diperbarui',
-            'data'    => $perjalanan
+            'data'    => $perjalanan,
         ], 200);
     }
 
@@ -224,38 +287,51 @@ class KruController extends Controller
      * SELESAI PERJALANAN
      * POST /api/kru/perjalanan/selesai
      *
-     * Perubahan dari versi lama:
-     * - Terima total_penumpang_naik (akumulasi dari Firebase totalPassengersBoarded)
-     * - Hitung total_pendapatan = total_penumpang_naik × tarif_snapshot
-     * - Response summary menambahkan info pendapatan
+     * ✅ NEW: Tarik gps_track dari Firebase RTDB → simpan ke MySQL
+     *        sebelum node track dihapus dari Firebase
      */
     public function selesaiPerjalanan(Request $request)
     {
         $request->validate([
-            'perjalanan_id'       => 'required|exists:perjalanan,id',
-            'total_penumpang'     => 'required|integer|min:0',
+            'perjalanan_id'        => 'required|exists:perjalanan,id',
+            'total_penumpang'      => 'required|integer|min:0',
             'total_penumpang_naik' => 'required|integer|min:0',
-            'jarak_tempuh'        => 'required|numeric|min:0',
-            'catatan'             => 'nullable|string',
+            'jarak_tempuh'         => 'required|numeric|min:0',
+            'catatan'              => 'nullable|string',
         ]);
 
         $perjalanan = Perjalanan::where('id', $request->perjalanan_id)
             ->where('kru_id', $request->user()->id)
             ->where('status', 'aktif')
+            ->with('armada')
             ->first();
 
         if (!$perjalanan) {
             return response()->json([
                 'success' => false,
-                'message' => 'Perjalanan tidak ditemukan atau sudah selesai'
+                'message' => 'Perjalanan tidak ditemukan atau sudah selesai',
             ], 404);
         }
 
-        $waktuSelesai  = now();
-        $durasiMenit   = (int) $perjalanan->waktu_mulai->diffInMinutes($waktuSelesai);
-        $penumpangNaik = $request->total_penumpang_naik;
-        $tarifSnapshot = (float) ($perjalanan->tarif_snapshot ?? 0);
+        $waktuSelesai    = now();
+        $durasiMenit     = (int) $perjalanan->waktu_mulai->diffInMinutes($waktuSelesai);
+        $penumpangNaik   = $request->total_penumpang_naik;
+        $tarifSnapshot   = (float) ($perjalanan->tarif_snapshot ?? 0);
         $totalPendapatan = $penumpangNaik * $tarifSnapshot;
+
+        // ── Ambil GPS track dari Firebase RTDB ───────────────────────────
+        $firebaseBusId = $perjalanan->armada?->firebase_bus_id;
+        $gpsTrack      = [];
+
+        if ($firebaseBusId) {
+            $gpsTrack = $this->fetchGpsTrackFromFirebase($firebaseBusId);
+
+            // Hapus node track di Firebase supaya tidak menumpuk untuk trip berikutnya
+            if (!empty($gpsTrack)) {
+                $this->clearFirebaseTrack($firebaseBusId);
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────
 
         $perjalanan->update([
             'waktu_selesai'        => $waktuSelesai,
@@ -266,6 +342,7 @@ class KruController extends Controller
             'durasi_menit'         => $durasiMenit,
             'status'               => 'selesai',
             'catatan'              => $request->catatan,
+            'gps_track'            => !empty($gpsTrack) ? $gpsTrack : null, // ✅ simpan ke MySQL
         ]);
 
         $perjalanan->load(['kru', 'armada', 'rute']);
@@ -276,15 +353,16 @@ class KruController extends Controller
             'data'    => [
                 'perjalanan' => $perjalanan,
                 'summary'    => [
-                    'durasi_jam'       => floor($durasiMenit / 60),
-                    'durasi_menit'     => $durasiMenit % 60,
-                    'total_penumpang'  => $perjalanan->total_penumpang,
-                    'penumpang_naik'   => $penumpangNaik,
-                    'jarak_km'         => $perjalanan->jarak_tempuh,
-                    'tarif_per_orang'  => $tarifSnapshot,
-                    'total_pendapatan' => $totalPendapatan,
-                ]
-            ]
+                    'durasi_jam'        => floor($durasiMenit / 60),
+                    'durasi_menit'      => $durasiMenit % 60,
+                    'total_penumpang'   => $perjalanan->total_penumpang,
+                    'penumpang_naik'    => $penumpangNaik,
+                    'jarak_km'          => $perjalanan->jarak_tempuh,
+                    'tarif_per_orang'   => $tarifSnapshot,
+                    'total_pendapatan'  => $totalPendapatan,
+                    'gps_track_points'  => count($gpsTrack), // berapa titik yang tersimpan
+                ],
+            ],
         ], 200);
     }
 
@@ -303,14 +381,14 @@ class KruController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Tidak ada perjalanan aktif',
-                'data'    => null
+                'data'    => null,
             ], 200);
         }
 
         return response()->json([
             'success' => true,
             'message' => 'Data perjalanan aktif',
-            'data'    => $perjalanan
+            'data'    => $perjalanan,
         ], 200);
     }
 
@@ -324,7 +402,7 @@ class KruController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Logout berhasil'
+            'message' => 'Logout berhasil',
         ], 200);
     }
 }
