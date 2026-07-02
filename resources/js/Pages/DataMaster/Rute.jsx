@@ -45,6 +45,29 @@ const useGoogleMaps = (apiKey) => {
   return { isLoaded, loadError };
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// FIX: dropdown saran Google Places (.pac-container) di-render oleh Google
+// langsung ke <body>, tapi modal kita punya overlay z-50. Tanpa override ini,
+// dropdown sebenarnya MUNCUL tapi tertutup/​ketiban modal sehingga user
+// merasa "lama tidak muncul" padahal sebenarnya tertimbun di belakang.
+// Style ini hanya perlu di-inject sekali untuk seluruh halaman.
+// ─────────────────────────────────────────────────────────────────────────
+const usePacContainerFix = () => {
+  useEffect(() => {
+    const styleId = 'pac-container-zindex-fix';
+    if (document.getElementById(styleId)) return;
+
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.innerHTML = `
+      .pac-container {
+        z-index: 99999 !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }, []);
+};
+
 export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -52,11 +75,14 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [ruteToDelete, setRuteToDelete] = useState(null);
   const [isCalculating, setIsCalculating] = useState(false);
-  
+
   // State untuk multiple routes
   const [availableRoutes, setAvailableRoutes] = useState([]);
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
-  
+
+  // State untuk mode "pilih lewat peta"
+  const [pickMode, setPickMode] = useState(null); // null | 'asal' | 'tujuan'
+
   const [formData, setFormData] = useState({
     nama_rute: '',
     kota_asal: '',
@@ -76,13 +102,149 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const directionsServiceRef = useRef(null);
+  const geocoderRef = useRef(null);
   const polylineRefs = useRef([]);
   const originAutocompleteRef = useRef(null);
   const destinationAutocompleteRef = useRef(null);
   const originInputRef = useRef(null);
   const destinationInputRef = useRef(null);
+  const originMarkerRef = useRef(null);
+  const destinationMarkerRef = useRef(null);
+  const mapClickListenerRef = useRef(null);
+  const pickModeRef = useRef(null); // selalu sinkron dengan state pickMode, dipakai di dalam closure listener
+
+  // ───────────────────────────────────────────────────────────────────
+  // FIX UTAMA: saat modal dibuka untuk EDIT, formData.kota_asal &
+  // kota_tujuan sudah terisi data lama. Tanpa flag ini, useEffect
+  // auto-calculate route akan langsung jalan dan MENIMPA rute lama
+  // dengan hasil Directions API yang baru (bisa beda jalur/jarak dari
+  // yang tersimpan). Flag ini dipakai untuk melewati auto-calculate
+  // SATU KALI tepat setelah modal edit dibuka — penggambaran rute lama
+  // dilakukan manual di initializeMap() dari track_coordinates.
+  // ───────────────────────────────────────────────────────────────────
+  const skipNextAutoCalcRef = useRef(false);
 
   const { isLoaded: mapsLoaded, loadError } = useGoogleMaps(googleMapsApiKey);
+  usePacContainerFix();
+
+  useEffect(() => {
+    pickModeRef.current = pickMode;
+  }, [pickMode]);
+
+  // ───────────────────────────────────────────────────────────────────
+  // Reverse geocode koordinat -> alamat, lalu isi field yang sesuai
+  // ───────────────────────────────────────────────────────────────────
+  const reverseGeocodeAndFill = useCallback((latLng, target) => {
+    if (!geocoderRef.current) return;
+
+    geocoderRef.current.geocode({ location: latLng }, (results, status) => {
+      let alamat = `${latLng.lat().toFixed(6)}, ${latLng.lng().toFixed(6)}`;
+      if (status === 'OK' && results && results[0]) {
+        alamat = results[0].formatted_address;
+      }
+
+      if (target === 'asal') {
+        if (originInputRef.current) originInputRef.current.value = alamat;
+        setFormData((prev) => ({ ...prev, kota_asal: alamat }));
+      } else {
+        if (destinationInputRef.current) destinationInputRef.current.value = alamat;
+        setFormData((prev) => ({ ...prev, kota_tujuan: alamat }));
+      }
+    });
+  }, []);
+
+  // ───────────────────────────────────────────────────────────────────
+  // Pasang / pindahkan marker di peta untuk asal/tujuan.
+  // skipGeocode=true dipakai saat menggambar ULANG titik dari data yang
+  // SUDAH ADA (mode edit) — supaya tidak menimpa kota_asal/kota_tujuan
+  // yang sudah benar dengan hasil reverse geocode (yang formatnya bisa
+  // beda dari alamat yang tersimpan di database).
+  // ───────────────────────────────────────────────────────────────────
+  const placeMarker = useCallback((latLng, target, skipGeocode = false) => {
+    if (!mapRef.current || !window.google) return;
+
+    const isOrigin = target === 'asal';
+    const markerRef = isOrigin ? originMarkerRef : destinationMarkerRef;
+
+    if (markerRef.current) {
+      markerRef.current.setPosition(latLng);
+    } else {
+      const marker = new window.google.maps.Marker({
+        position: latLng,
+        map: mapRef.current,
+        draggable: true,
+        label: isOrigin ? 'A' : 'B',
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: 10,
+          fillColor: isOrigin ? '#16A34A' : '#DC2626',
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 2,
+        },
+      });
+
+      marker.addListener('dragend', () => {
+        reverseGeocodeAndFill(marker.getPosition(), target);
+      });
+
+      markerRef.current = marker;
+    }
+
+    if (!skipGeocode) {
+      reverseGeocodeAndFill(latLng, target);
+    }
+  }, [reverseGeocodeAndFill]);
+
+  // Aktifkan mode pilih titik di peta untuk asal/tujuan
+  const activatePickMode = (target) => {
+    setPickMode(target);
+  };
+
+  // ───────────────────────────────────────────────────────────────────
+  // Gambar ulang rute yang SUDAH TERSIMPAN (dipakai saat mode edit):
+  // parse track_coordinates -> polyline + marker A/B di titik awal/akhir
+  // -> fitBounds, TANPA memanggil Directions API sama sekali.
+  // ───────────────────────────────────────────────────────────────────
+  const drawSavedTrack = useCallback((map) => {
+    if (!formData.track_coordinates) return false;
+
+    let coords;
+    try {
+      coords = JSON.parse(formData.track_coordinates);
+    } catch (err) {
+      console.error('Gagal parse track_coordinates:', err);
+      return false;
+    }
+
+    if (!Array.isArray(coords) || coords.length === 0) return false;
+
+    const path = coords
+      .filter((c) => c && typeof c.lat === 'number' && typeof c.lng === 'number')
+      .map((c) => new window.google.maps.LatLng(c.lat, c.lng));
+
+    if (path.length === 0) return false;
+
+    const polyline = new window.google.maps.Polyline({
+      path,
+      geodesic: true,
+      strokeColor: '#1E40AF',
+      strokeOpacity: 0.8,
+      strokeWeight: 6,
+      map,
+    });
+    polylineRefs.current.push(polyline);
+
+    // Marker titik asal (awal track) & tujuan (akhir track)
+    placeMarker(path[0], 'asal', true);
+    placeMarker(path[path.length - 1], 'tujuan', true);
+
+    const bounds = new window.google.maps.LatLngBounds();
+    path.forEach((p) => bounds.extend(p));
+    map.fitBounds(bounds);
+
+    return true;
+  }, [formData.track_coordinates, placeMarker]);
 
   // Initialize Map
   const initializeMap = useCallback(() => {
@@ -103,6 +265,15 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
 
       mapRef.current = map;
       directionsServiceRef.current = new window.google.maps.DirectionsService();
+      geocoderRef.current = new window.google.maps.Geocoder();
+
+      // Klik di peta -> isi titik asal/tujuan sesuai pickMode aktif
+      mapClickListenerRef.current = map.addListener('click', (e) => {
+        const mode = pickModeRef.current;
+        if (!mode) return; // tidak dalam mode pilih titik, abaikan klik
+        placeMarker(e.latLng, mode);
+        setPickMode(null); // matikan mode setelah satu kali pilih
+      });
 
       // Setup Autocomplete for Origin
       if (originInputRef.current) {
@@ -115,6 +286,10 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
           const place = originAutocomplete.getPlace();
           if (place && place.formatted_address) {
             setFormData(prev => ({ ...prev, kota_asal: place.formatted_address }));
+            if (place.geometry?.location) {
+              placeMarker(place.geometry.location, 'asal');
+              mapRef.current?.panTo(place.geometry.location);
+            }
           }
         });
 
@@ -132,16 +307,33 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
           const place = destinationAutocomplete.getPlace();
           if (place && place.formatted_address) {
             setFormData(prev => ({ ...prev, kota_tujuan: place.formatted_address }));
+            if (place.geometry?.location) {
+              placeMarker(place.geometry.location, 'tujuan');
+              mapRef.current?.panTo(place.geometry.location);
+            }
           }
         });
 
         destinationAutocompleteRef.current = destinationAutocomplete;
       }
 
+      // ───────────────────────────────────────────────────────────
+      // MODE EDIT: gambar marker A/B + jalur dari data yang sudah
+      // tersimpan (track_coordinates), tanpa hit Directions API.
+      // Kalau data lama belum punya track_coordinates (data lama),
+      // fallback ke alur lama (auto-calculate via Directions API).
+      // ───────────────────────────────────────────────────────────
+      if (editMode) {
+        const drawn = drawSavedTrack(map);
+        if (drawn) {
+          skipNextAutoCalcRef.current = true;
+        }
+      }
+
     } catch (error) {
       console.error('Error initializing map:', error);
     }
-  }, [mapsLoaded]);
+  }, [mapsLoaded, placeMarker, editMode, drawSavedTrack]);
 
   // Initialize map when modal opens
   useEffect(() => {
@@ -155,9 +347,17 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
 
   // Auto-calculate route when both origin and destination are filled
   useEffect(() => {
+    // Lewati SATU KALI auto-calculate ini kalau baru saja buka modal edit
+    // dengan rute lama yang sudah berhasil digambar dari track_coordinates.
+    if (skipNextAutoCalcRef.current) {
+      skipNextAutoCalcRef.current = false;
+      return;
+    }
+
     if (formData.kota_asal && formData.kota_tujuan && mapsLoaded && directionsServiceRef.current) {
       calculateMultipleRoutes();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.kota_asal, formData.kota_tujuan, mapsLoaded]);
 
   // Calculate Multiple Routes (Via Tol & Non-Tol)
@@ -221,7 +421,7 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
         // Render each unique route as polyline
         uniqueRoutes.forEach((route, index) => {
           const path = route.overview_path;
-          
+
           const polyline = new window.google.maps.Polyline({
             path: path,
             geodesic: true,
@@ -322,9 +522,26 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
     }));
   }, []);
 
+  // Bersihkan marker asal/tujuan dari peta
+  const clearMarkers = () => {
+    if (originMarkerRef.current) {
+      originMarkerRef.current.setMap(null);
+      originMarkerRef.current = null;
+    }
+    if (destinationMarkerRef.current) {
+      destinationMarkerRef.current.setMap(null);
+      destinationMarkerRef.current = null;
+    }
+  };
+
   // Handle Open Modal
   const handleOpenModal = (rute = null) => {
     if (rute) {
+      // PENTING: set flag SEBELUM setFormData supaya saat useEffect
+      // auto-calculate jalan (karena kota_asal/kota_tujuan berubah dari
+      // kosong -> terisi), dia langsung skip dan tidak menimpa rute lama.
+      skipNextAutoCalcRef.current = true;
+
       setEditMode(true);
       setCurrentRute(rute);
       setFormData({
@@ -339,6 +556,7 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
         catatan: rute.catatan || '',
       });
     } else {
+      skipNextAutoCalcRef.current = false;
       setEditMode(false);
       setCurrentRute(null);
       setFormData({
@@ -355,6 +573,7 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
     }
     setAvailableRoutes([]);
     setSelectedRouteIndex(0);
+    setPickMode(null);
     setShowModal(true);
   };
 
@@ -362,15 +581,23 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
     setShowModal(false);
     setEditMode(false);
     setCurrentRute(null);
-    
-    // Clear polylines
+
+    // Clear polylines & markers
     polylineRefs.current.forEach(polyline => polyline.setMap(null));
     polylineRefs.current = [];
-    
+    clearMarkers();
+
+    if (mapClickListenerRef.current) {
+      window.google?.maps?.event?.removeListener(mapClickListenerRef.current);
+      mapClickListenerRef.current = null;
+    }
+
     mapRef.current = null;
     setAvailableRoutes([]);
     setSelectedRouteIndex(0);
-    
+    setPickMode(null);
+    skipNextAutoCalcRef.current = false;
+
     setFormData({
       nama_rute: '',
       kota_asal: '',
@@ -386,7 +613,7 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    
+
     if (!formData.polyline) {
       alert('Silakan pilih kota asal dan tujuan untuk generate rute');
       return;
@@ -565,8 +792,8 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
                       </td>
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                          item.status === 'aktif' 
-                            ? 'bg-green-100 text-green-700' 
+                          item.status === 'aktif'
+                            ? 'bg-green-100 text-green-700'
                             : 'bg-red-100 text-red-700'
                         }`}>
                           {item.status === 'aktif' ? 'Aktif' : 'Nonaktif'}
@@ -676,9 +903,27 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
                 {/* Route Selection */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Kota Asal <span className="text-red-500">*</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Kota Asal <span className="text-red-500">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => activatePickMode('asal')}
+                        disabled={!mapsLoaded}
+                        className={`text-xs font-medium px-2 py-1 rounded-md flex items-center gap-1 transition-colors ${
+                          pickMode === 'asal'
+                            ? 'bg-green-600 text-white'
+                            : 'bg-green-50 text-green-700 hover:bg-green-100'
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        {pickMode === 'asal' ? 'Klik di peta...' : 'Pilih di Peta'}
+                      </button>
+                    </div>
                     <input
                       ref={originInputRef}
                       type="text"
@@ -691,9 +936,27 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Kota Tujuan <span className="text-red-500">*</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Kota Tujuan <span className="text-red-500">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => activatePickMode('tujuan')}
+                        disabled={!mapsLoaded}
+                        className={`text-xs font-medium px-2 py-1 rounded-md flex items-center gap-1 transition-colors ${
+                          pickMode === 'tujuan'
+                            ? 'bg-red-600 text-white'
+                            : 'bg-red-50 text-red-700 hover:bg-red-100'
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        {pickMode === 'tujuan' ? 'Klik di peta...' : 'Pilih di Peta'}
+                      </button>
+                    </div>
                     <input
                       ref={destinationInputRef}
                       type="text"
@@ -705,6 +968,15 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
                     />
                   </div>
                 </div>
+
+                {pickMode && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800 flex items-center gap-2">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Klik titik lokasi {pickMode === 'asal' ? 'asal' : 'tujuan'} langsung di peta di bawah ini.
+                  </div>
+                )}
 
                 {/* Route Info */}
                 {isCalculating && (
@@ -731,7 +1003,7 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
                       </span>
                     </div>
                     <p className="text-sm text-green-700 mb-3">Klik rute di peta atau pilih di bawah untuk memilih jalur</p>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       {availableRoutes.map((route, index) => {
                         const legs = route.legs;
@@ -744,8 +1016,8 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
                         const jarak = (totalDistance / 1000).toFixed(2);
                         const waktu = Math.round(totalDuration / 60);
 
-                        const routeLabel = index === 0 ? 'Rute Rekomendasi' : 
-                                         route.routeType === 'non_tol' ? 'Rute Tanpa Tol' : 
+                        const routeLabel = index === 0 ? 'Rute Rekomendasi' :
+                                         route.routeType === 'non_tol' ? 'Rute Tanpa Tol' :
                                          `Alternatif ${index}`;
 
                         return (
@@ -790,11 +1062,16 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Peta Rute {availableRoutes.length > 0 && '(Klik rute untuk memilih)'}
                   </label>
-                  <div 
+                  <div
                     ref={mapContainerRef}
-                    className="w-full h-96 rounded-lg border-2 border-gray-300 bg-gray-50"
+                    className={`w-full h-96 rounded-lg border-2 bg-gray-50 transition-colors ${
+                      pickMode ? 'border-amber-400 cursor-crosshair' : 'border-gray-300'
+                    }`}
                     style={{ minHeight: '384px' }}
                   />
+                  <p className="text-xs text-gray-500 mt-2">
+                    Tips: gunakan tombol "Pilih di Peta" lalu klik lokasi langsung, atau geser marker A/B yang sudah muncul untuk koreksi titik secara presisi. Mengubah titik asal/tujuan akan menghitung ulang rute otomatis.
+                  </p>
                 </div>
 
                 {/* Route Info Display */}
