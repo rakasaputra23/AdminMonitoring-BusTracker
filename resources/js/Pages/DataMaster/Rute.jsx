@@ -1,45 +1,39 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import SimpleLayout from '@/Layouts/SimpleLayout';
 import { Head, router } from '@inertiajs/react';
+import { loadGoogleMaps } from '@/lib/googleMapsLoader';
 
-// Custom Hook untuk Load Google Maps
+// ─────────────────────────────────────────────────────────────────────────
+// FIX: sebelumnya hook ini bikin <script> Google Maps sendiri dengan
+// libraries=places, dan cek `window.google.maps` doang untuk anggap
+// "sudah siap". Kalau halaman Dashboard sempat dibuka duluan (yang
+// load Google Maps dengan libraries=geometry saja), google.maps sudah
+// ADA tapi google.maps.places TIDAK -> initializeMap() di bawah crash
+// di baris `new google.maps.places.Autocomplete(...)`.
+//
+// Sekarang loading Google Maps dipusatkan lewat loadGoogleMaps() dari
+// resources/js/lib/googleMapsLoader.js, yang selalu minta gabungan
+// library (places + geometry) sekali untuk seluruh app, dan semua
+// komponen menunggu proses loading yang sama (tidak race lagi).
+// ─────────────────────────────────────────────────────────────────────────
 const useGoogleMaps = (apiKey) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
-    if (!apiKey) {
-      setLoadError('API Key tidak ditemukan');
-      return;
-    }
+    let cancelled = false;
 
-    if (window.google && window.google.maps) {
-      setIsLoaded(true);
-      return;
-    }
+    loadGoogleMaps(apiKey, ['places', 'geometry'])
+      .then(() => {
+        if (!cancelled) setIsLoaded(true);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err.message);
+      });
 
-    const existingScript = document.querySelector('script[src*="maps.googleapis.com"]');
-    if (existingScript) {
-      existingScript.addEventListener('load', () => setIsLoaded(true));
-      existingScript.addEventListener('error', () => setLoadError('Gagal memuat Google Maps'));
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&callback=initMap`;
-    script.async = true;
-    script.defer = true;
-
-    window.initMap = () => {
-      setIsLoaded(true);
-      delete window.initMap;
+    return () => {
+      cancelled = true;
     };
-
-    script.onerror = () => {
-      setLoadError('Gagal memuat Google Maps');
-    };
-
-    document.head.appendChild(script);
   }, [apiKey]);
 
   return { isLoaded, loadError };

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import SimpleLayout from '@/Layouts/SimpleLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/Components/ui/Card';
 import { Badge } from '@/Components/ui/Badge';
@@ -7,6 +7,7 @@ import { Separator } from '@/Components/ui/Separator';
 import { ScrollArea } from '@/Components/ui/ScrollArea';
 import { Alert, AlertDescription, AlertTitle } from '@/Components/ui/Alert';
 import { X, MapPin, Users, Gauge, User, Clock, Navigation, Loader2, AlertCircle, TrendingUp, Route as RouteIcon } from 'lucide-react';
+import { loadGoogleMaps } from '@/lib/googleMapsLoader';
 
 export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error }) {
     const mapRef = useRef(null);
@@ -16,7 +17,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
     const trailLinesRef = useRef({});
     const routePolylineRef = useRef(null);
     const selectedCircleRef = useRef(null);
-    
+
     const [currentStats, setCurrentStats] = useState(stats);
     const [currentBuses, setCurrentBuses] = useState(buses || {});
     const [selectedBus, setSelectedBus] = useState(null);
@@ -24,36 +25,57 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [lastRefreshTime, setLastRefreshTime] = useState(new Date());
 
-    // Load Google Maps Script
+    // ─────────────────────────────────────────────────────────────────
+    // FIX #1 (stale closure): mapLoaded (state) yang dibaca dari dalam
+    // setInterval selalu "beku" di render pertama (mapLoaded=false),
+    // karena useEffect setInterval punya dependency array kosong ([]).
+    // Akibatnya updateBusMarkers() TIDAK PERNAH terpanggil dari timer
+    // otomatis, walau data bus di state sudah terupdate. Makanya harus
+    // klik Refresh manual dulu baru marker bergerak.
+    //
+    // Solusinya: simpan mapLoaded juga di ref yang selalu sinkron,
+    // lalu baca dari ref (bukan state) di dalam fetchLatestData.
+    // ─────────────────────────────────────────────────────────────────
+    const mapLoadedRef = useRef(false);
+    useEffect(() => {
+        mapLoadedRef.current = mapLoaded;
+    }, [mapLoaded]);
+
+    // ─────────────────────────────────────────────────────────────────
+    // FIX #2 (Google Maps libraries conflict dengan halaman Rute):
+    // Sebelumnya script di-load manual di sini dengan
+    // `libraries=geometry` saja. Kalau halaman Rute.jsx dibuka setelah
+    // Dashboard, dia mendeteksi window.google.maps SUDAH ADA (dari
+    // sini) dan menganggap sudah siap, padahal `places` belum pernah
+    // di-load -> crash "Cannot read properties of undefined
+    // (reading 'Autocomplete')" dan polyline di Rute gagal tergambar.
+    //
+    // Sekarang loading Google Maps dipusatkan lewat loadGoogleMaps()
+    // di resources/js/lib/googleMapsLoader.js, yang selalu minta
+    // gabungan library (places + geometry) sekali untuk seluruh app,
+    // jadi halaman mana pun yang load lebih dulu tidak masalah.
+    // ─────────────────────────────────────────────────────────────────
     useEffect(() => {
         if (!googleMapsApiKey) {
             console.error('Google Maps API Key is missing');
             return;
         }
 
-        if (window.google?.maps) {
-            initMap();
-            return;
-        }
+        let cancelled = false;
 
-        const script = document.createElement('script');
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=geometry`;
-        script.async = true;
-        script.defer = true;
-        script.onload = () => {
-            console.log('✅ Google Maps loaded successfully');
-            initMap();
-        };
-        script.onerror = () => {
-            console.error('❌ Failed to load Google Maps');
-        };
-
-        document.head.appendChild(script);
+        loadGoogleMaps(googleMapsApiKey, ['places', 'geometry'])
+            .then(() => {
+                if (!cancelled) {
+                    console.log('✅ Google Maps loaded successfully');
+                    initMap();
+                }
+            })
+            .catch((err) => {
+                console.error('❌ Failed to load Google Maps:', err);
+            });
 
         return () => {
-            if (script.parentNode) {
-                script.parentNode.removeChild(script);
-            }
+            cancelled = true;
         };
     }, [googleMapsApiKey]);
 
@@ -148,7 +170,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
             setMapLoaded(true);
 
             console.log('✅ Map initialized with APK style');
-            
+
             updateBusMarkers(buses);
 
         } catch (err) {
@@ -156,30 +178,14 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
         }
     };
 
-    // Start real-time updates setiap 5 detik
-    useEffect(() => {
-        const interval = setInterval(() => {
-            fetchLatestData(true);
-        }, 5000);
-        return () => clearInterval(interval);
-    }, []);
-
-    // Auto-update floating card jika ada bus yang dipilih
-    useEffect(() => {
-        if (selectedBus && currentBuses[selectedBus.id]) {
-            const updatedBus = currentBuses[selectedBus.id];
-            const isOnline = hasValidGPS(updatedBus);
-            setSelectedBus({ id: selectedBus.id, ...updatedBus, isOnline });
-        } else if (selectedBus && !currentBuses[selectedBus.id]) {
-            // Bus sudah tidak ada di data, tutup detail panel
-            setSelectedBus(null);
-            clearPolylines();
-            closeAllInfoWindows();
-        }
-    }, [currentBuses]);
-
-    // Fetch latest data dengan enhanced refresh
-    const fetchLatestData = async (silent = false) => {
+    // ─────────────────────────────────────────────────────────────────
+    // Fetch latest data dengan enhanced refresh.
+    // Dibungkus useCallback supaya identitas fungsinya stabil, dan
+    // SEMUA nilai yang dibaca di sini berasal dari ref/setState-updater
+    // (bukan state langsung) supaya aman dipanggil dari closure lama
+    // di dalam setInterval tanpa masalah stale state.
+    // ─────────────────────────────────────────────────────────────────
+    const fetchLatestData = useCallback(async (silent = false) => {
         if (!silent) setIsRefreshing(true);
 
         try {
@@ -196,17 +202,18 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
             }
 
             if (busesData.success) {
-                // ✅ ENHANCED: Replace semua data, bukan merge
+                // Replace semua data, bukan merge
                 const newBusesData = busesData.data || {};
-                
+
                 setCurrentBuses(newBusesData);
-                
-                if (mapLoaded) {
-                    // ✅ ENHANCED: Hapus marker yang sudah tidak ada di data baru
+
+                // FIX: pakai mapLoadedRef.current (selalu up-to-date),
+                // bukan mapLoaded (state, bisa stale di closure timer).
+                if (mapLoadedRef.current) {
                     removeObsoleteMarkers(newBusesData);
                     updateBusMarkers(newBusesData);
                 }
-                
+
                 setLastRefreshTime(new Date());
             }
         } catch (err) {
@@ -216,13 +223,35 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                 setTimeout(() => setIsRefreshing(false), 500);
             }
         }
-    };
+    }, []);
 
-    // ✅ NEW: Remove markers yang sudah tidak ada di data baru
+    // Start real-time updates setiap 5 detik
+    useEffect(() => {
+        const interval = setInterval(() => {
+            fetchLatestData(true);
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [fetchLatestData]);
+
+    // Auto-update floating card jika ada bus yang dipilih
+    useEffect(() => {
+        if (selectedBus && currentBuses[selectedBus.id]) {
+            const updatedBus = currentBuses[selectedBus.id];
+            const isOnline = hasValidGPS(updatedBus);
+            setSelectedBus({ id: selectedBus.id, ...updatedBus, isOnline });
+        } else if (selectedBus && !currentBuses[selectedBus.id]) {
+            // Bus sudah tidak ada di data, tutup detail panel
+            setSelectedBus(null);
+            clearPolylines();
+            closeAllInfoWindows();
+        }
+    }, [currentBuses]);
+
+    // Remove markers yang sudah tidak ada di data baru
     const removeObsoleteMarkers = (newBusesData) => {
         const newBusIds = Object.keys(newBusesData);
         const currentBusIds = Object.keys(markersRef.current);
-        
+
         currentBusIds.forEach(busId => {
             if (!newBusIds.includes(busId)) {
                 // Hapus marker
@@ -230,19 +259,19 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                     markersRef.current[busId].setMap(null);
                     delete markersRef.current[busId];
                 }
-                
+
                 // Hapus info window
                 if (infoWindowsRef.current[busId]) {
                     infoWindowsRef.current[busId].close();
                     delete infoWindowsRef.current[busId];
                 }
-                
+
                 // Hapus trail line
                 if (trailLinesRef.current[busId]) {
                     trailLinesRef.current[busId].setMap(null);
                     delete trailLinesRef.current[busId];
                 }
-                
+
                 console.log('🗑️ Removed obsolete marker:', busId);
             }
         });
@@ -251,7 +280,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
     // Create bus icon (seperti APK - bulat putih dengan bus biru)
     const createBusIcon = (isOnline) => {
         const color = isOnline ? '#3B82F6' : '#9CA3AF';
-        
+
         const svg = `
             <svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="20" cy="22" r="18" fill="#000000" opacity="0.15"/>
@@ -278,7 +307,10 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
         };
     };
 
-    // Smooth marker animation
+    // Smooth marker animation (requestAnimationFrame + easing).
+    // Kode ini sebenarnya sudah benar sejak awal — cuma tidak pernah
+    // ter-trigger oleh timer 5 detik karena bug closure di atas.
+    // Sekarang setelah bug itu diperbaiki, animasi ini otomatis aktif.
     const animateMarker = (marker, startPos, endPos, duration = 1000) => {
         const start = performance.now();
 
@@ -286,8 +318,8 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
             const elapsed = currentTime - start;
             const progress = Math.min(elapsed / duration, 1);
 
-            const easeProgress = progress < 0.5 
-                ? 2 * progress * progress 
+            const easeProgress = progress < 0.5
+                ? 2 * progress * progress
                 : -1 + (4 - 2 * progress) * progress;
 
             const lat = startPos.lat() + (endPos.lat - startPos.lat()) * easeProgress;
@@ -305,10 +337,10 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
 
     // Check valid GPS
     const hasValidGPS = (bus) => {
-        return bus.location && 
-               bus.location.latitude && 
-               bus.location.longitude && 
-               bus.location.latitude !== 0 && 
+        return bus.location &&
+               bus.location.latitude &&
+               bus.location.longitude &&
+               bus.location.latitude !== 0 &&
                bus.location.longitude !== 0;
     };
 
@@ -321,9 +353,9 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
 
         Object.entries(busesData).forEach(([busId, bus]) => {
             const isOnline = hasValidGPS(bus);
-            
+
             if (!isOnline) {
-                // ✅ ENHANCED: Jika tidak ada GPS valid, skip marker creation
+                // Jika tidak ada GPS valid, skip marker creation
                 // Hapus marker jika ada
                 if (markersRef.current[busId]) {
                     markersRef.current[busId].setMap(null);
@@ -343,12 +375,12 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                 if (markersRef.current[busId]) {
                     const marker = markersRef.current[busId];
                     const oldPos = marker.getPosition();
-                    
+
                     if (oldPos) {
                         animateMarker(marker, oldPos, position, 1000);
                     }
                     marker.setIcon(markerIcon);
-                    
+
                     if (infoWindowsRef.current[busId]) {
                         infoWindowsRef.current[busId].setContent(createInfoWindowContent(busId, bus));
                     }
@@ -462,7 +494,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
         // Draw track polyline (HIJAU - seperti APK)
         if (bus.track && bus.track.length > 1) {
             const trailPath = bus.track.map(t => ({ lat: t.lat, lng: t.lng }));
-            
+
             trailLinesRef.current[busId] = new google.maps.Polyline({
                 path: trailPath,
                 geodesic: true,
@@ -487,7 +519,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
             line.setMap(null);
         });
         trailLinesRef.current = {};
-        
+
         if (selectedCircleRef.current) {
             selectedCircleRef.current.setMap(null);
             selectedCircleRef.current = null;
@@ -512,7 +544,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
         if (!bus) return;
 
         const isOnline = hasValidGPS(bus);
-        
+
         if (!isOnline) return;
 
         const position = {
@@ -534,7 +566,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
         const date = new Date(dateString);
         const now = new Date();
         const seconds = Math.floor((now - date) / 1000);
-        
+
         if (seconds < 60) return `${seconds} detik lalu`;
         if (seconds < 3600) return `${Math.floor(seconds / 60)} menit lalu`;
         if (seconds < 86400) return `${Math.floor(seconds / 3600)} jam lalu`;
@@ -543,8 +575,8 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
 
     // Format refresh time
     const formatRefreshTime = (date) => {
-        return date.toLocaleTimeString('id-ID', { 
-            hour: '2-digit', 
+        return date.toLocaleTimeString('id-ID', {
+            hour: '2-digit',
             minute: '2-digit',
             second: '2-digit'
         });
@@ -657,7 +689,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                 <div className="text-xs text-slate-500">
                                     Last: {formatRefreshTime(lastRefreshTime)}
                                 </div>
-                                <Button 
+                                <Button
                                     onClick={() => fetchLatestData(false)}
                                     disabled={isRefreshing}
                                     size="sm"
@@ -683,7 +715,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                     </CardHeader>
                     <CardContent className="p-0 relative">
                         <div ref={mapRef} className="w-full h-[600px] bg-slate-100"></div>
-                        
+
                         {/* Loading */}
                         {!mapLoaded && (
                             <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-90">
@@ -702,7 +734,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                         <Navigation className="w-5 h-5" />
                                         <h3 className="font-bold text-sm">Detail Bus</h3>
                                     </div>
-                                    <Button 
+                                    <Button
                                         onClick={closeDetailPanel}
                                         size="sm"
                                         variant="ghost"
@@ -711,7 +743,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                         <X className="w-4 h-4" />
                                     </Button>
                                 </div>
-                                
+
                                 <ScrollArea className="h-[500px]">
                                     <div className="p-4 space-y-4">
                                         {/* Header dengan Nama Bus */}
@@ -788,10 +820,10 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                     </span>
                                                 </div>
                                                 <div className="w-full bg-slate-200 rounded-full h-2">
-                                                    <div 
+                                                    <div
                                                         className="bg-gradient-to-r from-blue-500 to-blue-600 h-2 rounded-full transition-all"
-                                                        style={{ 
-                                                            width: `${selectedBus.capacity > 0 ? (selectedBus.currentPassengers / selectedBus.capacity) * 100 : 0}%` 
+                                                        style={{
+                                                            width: `${selectedBus.capacity > 0 ? (selectedBus.currentPassengers / selectedBus.capacity) * 100 : 0}%`
                                                         }}
                                                     ></div>
                                                 </div>
@@ -829,10 +861,10 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                             <div>
                                                                 <p className="text-blue-700">Waktu</p>
                                                                 <p className="font-semibold text-blue-900">
-                                                                    {selectedBus.eta.estimatedArrival 
-                                                                        ? new Date(selectedBus.eta.estimatedArrival).toLocaleTimeString('id-ID', { 
-                                                                            hour: '2-digit', 
-                                                                            minute: '2-digit' 
+                                                                    {selectedBus.eta.estimatedArrival
+                                                                        ? new Date(selectedBus.eta.estimatedArrival).toLocaleTimeString('id-ID', {
+                                                                            hour: '2-digit',
+                                                                            minute: '2-digit'
                                                                         })
                                                                         : 'N/A'}
                                                                 </p>
@@ -857,8 +889,8 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                             <Separator />
 
                                             <div className="text-xs text-center text-slate-400">
-                                                {selectedBus.isOnline 
-                                                    ? '🟢 Data real-time' 
+                                                {selectedBus.isOnline
+                                                    ? '🟢 Data real-time'
                                                     : `🔴 Offline - ${timeAgo(selectedBus.location?.lastUpdate)}`
                                                 }
                                             </div>
@@ -920,10 +952,10 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                 const occupancy = bus.currentPassengers || 0;
                                 const capacity = bus.capacity || 0;
                                 const percentage = capacity > 0 ? Math.round((occupancy / capacity) * 100) : 0;
-                                
+
                                 return (
-                                    <Card 
-                                        key={busId} 
+                                    <Card
+                                        key={busId}
                                         className={`cursor-pointer transition-all hover:shadow-md ${
                                             isOnline ? 'border-slate-200' : 'border-slate-200 bg-slate-50'
                                         } ${selectedBus?.id === busId ? 'ring-2 ring-blue-600' : ''}`}
@@ -955,7 +987,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                     <span className="font-semibold text-slate-900">{occupancy}/{capacity}</span>
                                                 </div>
                                                 <div className="w-full bg-slate-200 rounded-full h-1.5">
-                                                    <div 
+                                                    <div
                                                         className="bg-gradient-to-r from-blue-500 to-blue-600 h-1.5 rounded-full transition-all"
                                                         style={{ width: `${percentage}%` }}
                                                     ></div>
@@ -995,10 +1027,10 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                     const occupancy = bus.currentPassengers || 0;
                                     const capacity = bus.capacity || 0;
                                     const percentage = capacity > 0 ? Math.round((occupancy / capacity) * 100) : 0;
-                                    
+
                                     return (
                                         <div key={busId}>
-                                            <div 
+                                            <div
                                                 className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all hover:shadow-md ${
                                                     isOnline ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-200'
                                                 } ${selectedBus?.id === busId ? 'ring-2 ring-blue-600' : ''}`}
@@ -1060,10 +1092,10 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                             <span className="font-semibold text-slate-900">{occupancy}/{capacity} ({percentage}%)</span>
                                                         </div>
                                                         <div className="w-full bg-slate-200 rounded-full h-2">
-                                                            <div 
+                                                            <div
                                                                 className={`h-2 rounded-full transition-all ${
-                                                                    percentage > 80 ? 'bg-gradient-to-r from-red-500 to-red-600' : 
-                                                                    percentage > 50 ? 'bg-gradient-to-r from-yellow-500 to-yellow-600' : 
+                                                                    percentage > 80 ? 'bg-gradient-to-r from-red-500 to-red-600' :
+                                                                    percentage > 50 ? 'bg-gradient-to-r from-yellow-500 to-yellow-600' :
                                                                     'bg-gradient-to-r from-green-500 to-green-600'
                                                                 }`}
                                                                 style={{ width: `${percentage}%` }}
@@ -1117,7 +1149,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                     const occupancy = bus.currentPassengers || 0;
                                     const capacity = bus.capacity || 0;
                                     const percentage = capacity > 0 ? Math.round((occupancy / capacity) * 100) : 0;
-                                    
+
                                     return (
                                         <div key={busId} className="space-y-1">
                                             <div className="flex justify-between text-xs">
@@ -1125,10 +1157,10 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                                 <span className="font-bold text-slate-900">{percentage}%</span>
                                             </div>
                                             <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
-                                                <div 
+                                                <div
                                                     className={`h-3 rounded-full transition-all ${
-                                                        percentage > 80 ? 'bg-gradient-to-r from-red-500 to-red-600' : 
-                                                        percentage > 50 ? 'bg-gradient-to-r from-yellow-500 to-yellow-600' : 
+                                                        percentage > 80 ? 'bg-gradient-to-r from-red-500 to-red-600' :
+                                                        percentage > 50 ? 'bg-gradient-to-r from-yellow-500 to-yellow-600' :
                                                         'bg-gradient-to-r from-green-500 to-green-600'
                                                     }`}
                                                     style={{ width: `${percentage}%` }}
@@ -1152,7 +1184,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                     const speed = bus.location?.speed || 0;
                                     const maxSpeed = 100;
                                     const speedPercentage = Math.min((speed / maxSpeed) * 100, 100);
-                                    
+
                                     return (
                                         <div key={busId} className="flex items-center gap-3">
                                             <div className="w-24 text-xs font-medium text-slate-700 truncate">
@@ -1160,7 +1192,7 @@ export default function Dashboard({ auth, stats, buses, googleMapsApiKey, error 
                                             </div>
                                             <div className="flex-1 space-y-1">
                                                 <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
-                                                    <div 
+                                                    <div
                                                         className="h-3 bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all"
                                                         style={{ width: `${speedPercentage}%` }}
                                                     ></div>
