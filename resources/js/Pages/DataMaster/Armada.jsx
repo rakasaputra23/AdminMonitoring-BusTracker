@@ -12,18 +12,58 @@ export default function Armada({ auth, armada, filters }) {
 
   const emptyForm = {
     nama_bus        : '',
-    plat_nomor      : '',
     kelas           : 'Ekonomi',
     kapasitas       : '',
     status          : 'aktif',
-    firebase_bus_id : '', // ✅ TAMBAH
+    firebase_bus_id : '',
+  };
+
+  // ✅ TAMBAH: plat nomor dipecah jadi 3 bagian terpisah
+  const emptyPlat = {
+    wilayah : '', // 1-2 huruf, contoh: B, AG
+    angka   : '', // 1-4 angka
+    seri    : '', // 1-3 huruf
   };
 
   const [formData, setFormData] = useState(emptyForm);
+  const [plat, setPlat]         = useState(emptyPlat);
 
   const [searchTerm, setSearchTerm]     = useState(filters?.search || '');
   const [kelasFilter, setKelasFilter]   = useState(filters?.kelas  || '');
   const [statusFilter, setStatusFilter] = useState(filters?.status || '');
+
+  // ── Helper: pecah string plat "B 1234 XYZ" -> { wilayah, angka, seri } ──
+
+  const splitPlat = (platNomor) => {
+    if (!platNomor) return emptyPlat;
+    const parts = platNomor.trim().split(/\s+/);
+    return {
+      wilayah : parts[0] ?? '',
+      angka   : parts[1] ?? '',
+      seri    : parts[2] ?? '',
+    };
+  };
+
+  const joinPlat = (p) => {
+    const wilayah = (p.wilayah || '').trim();
+    const angka   = (p.angka   || '').trim();
+    const seri    = (p.seri    || '').trim();
+    if (!wilayah && !angka && !seri) return '';
+    return `${wilayah} ${angka} ${seri}`.replace(/\s+/g, ' ').trim();
+  };
+
+  // ── Validasi plat di sisi frontend (mirror dari validasi backend) ──
+
+  const PLAT_REGEX = /^[A-Z]{1,2} [0-9]{1,4} [A-Z]{1,3}$/;
+
+  const getPlatError = (p) => {
+    const joined = joinPlat(p);
+    if (!joined) return 'Plat nomor wajib diisi';
+    if (!PLAT_REGEX.test(joined)) {
+      return 'Format tidak valid. Kode wilayah 1-2 huruf, nomor 1-4 angka, seri 1-3 huruf';
+    }
+    return null;
+  };
 
   // ── Modal ──────────────────────────────────────────────────────────
 
@@ -34,16 +74,17 @@ export default function Armada({ auth, armada, filters }) {
       setCurrentArmada(item);
       setFormData({
         nama_bus        : item.nama_bus,
-        plat_nomor      : item.plat_nomor,
         kelas           : item.kelas,
         kapasitas       : item.kapasitas,
         status          : item.status,
-        firebase_bus_id : item.firebase_bus_id ?? '', // ✅ TAMBAH
+        firebase_bus_id : item.firebase_bus_id ?? '',
       });
+      setPlat(splitPlat(item.plat_nomor));
     } else {
       setEditMode(false);
       setCurrentArmada(null);
       setFormData(emptyForm);
+      setPlat(emptyPlat);
     }
     setShowModal(true);
   };
@@ -54,19 +95,49 @@ export default function Armada({ auth, armada, filters }) {
     setCurrentArmada(null);
     setErrors({});
     setFormData(emptyForm);
+    setPlat(emptyPlat);
+  };
+
+  // ── Input handlers untuk plat (auto uppercase & filter karakter) ──
+
+  const handlePlatWilayah = (e) => {
+    const val = e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+    setPlat((prev) => ({ ...prev, wilayah: val }));
+  };
+
+  const handlePlatAngka = (e) => {
+    const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 4);
+    setPlat((prev) => ({ ...prev, angka: val }));
+  };
+
+  const handlePlatSeri = (e) => {
+    const val = e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+    setPlat((prev) => ({ ...prev, seri: val }));
   };
 
   // ── Submit ─────────────────────────────────────────────────────────
 
   const handleSubmit = (e) => {
     e.preventDefault();
+
+    const platError = getPlatError(plat);
+    if (platError) {
+      setErrors((prev) => ({ ...prev, plat_nomor: platError }));
+      return;
+    }
+
+    const payload = {
+      ...formData,
+      plat_nomor: joinPlat(plat),
+    };
+
     if (editMode && currentArmada) {
-      router.put(`/data-master/armada/${currentArmada.id}`, formData, {
+      router.put(`/data-master/armada/${currentArmada.id}`, payload, {
         onSuccess : () => handleCloseModal(),
         onError   : (errs) => setErrors(errs),
       });
     } else {
-      router.post('/data-master/armada', formData, {
+      router.post('/data-master/armada', payload, {
         onSuccess : () => handleCloseModal(),
         onError   : (errs) => setErrors(errs),
       });
@@ -212,7 +283,7 @@ export default function Armada({ auth, armada, filters }) {
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Plat Nomor</th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kelas</th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kapasitas</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Firebase ID</th>{/* ✅ TAMBAH */}
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Firebase ID</th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
                 </tr>
@@ -264,7 +335,7 @@ export default function Armada({ auth, armada, filters }) {
                         </div>
                       </td>
 
-                      {/* ✅ TAMBAH: Firebase Bus ID */}
+                      {/* Firebase Bus ID */}
                       <td className="px-6 py-4">
                         {item.firebase_bus_id ? (
                           <span className="font-mono text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded">
@@ -373,6 +444,7 @@ export default function Armada({ auth, armada, filters }) {
                   value={formData.nama_bus}
                   onChange={(e) => setFormData({ ...formData, nama_bus: e.target.value })}
                   required
+                  minLength={3}
                   placeholder="Contoh: STJ Express 01"
                   className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                     errors.nama_bus ? 'border-red-400 bg-red-50' : 'border-gray-300'
@@ -381,22 +453,63 @@ export default function Armada({ auth, armada, filters }) {
                 {errors.nama_bus && <p className="text-red-600 text-xs mt-1">{errors.nama_bus}</p>}
               </div>
 
-              {/* Plat Nomor */}
+              {/* ✅ Plat Nomor — 3 kolom terpisah */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Plat Nomor <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  value={formData.plat_nomor}
-                  onChange={(e) => setFormData({ ...formData, plat_nomor: e.target.value.toUpperCase() })}
-                  required
-                  placeholder="Contoh: B 1234 XYZ"
-                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono ${
-                    errors.plat_nomor ? 'border-red-400 bg-red-50' : 'border-gray-300'
-                  }`}
-                />
-                {errors.plat_nomor && <p className="text-red-600 text-xs mt-1">{errors.plat_nomor}</p>}
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <input
+                      type="text"
+                      value={plat.wilayah}
+                      onChange={handlePlatWilayah}
+                      required
+                      placeholder="B"
+                      maxLength={2}
+                      className={`w-full px-3 py-2 border rounded-lg text-center font-mono uppercase tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                        errors.plat_nomor ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                      }`}
+                    />
+                    <p className="text-[11px] text-gray-400 text-center mt-1">Kode Wilayah</p>
+                  </div>
+                  <div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={plat.angka}
+                      onChange={handlePlatAngka}
+                      required
+                      placeholder="1234"
+                      maxLength={4}
+                      className={`w-full px-3 py-2 border rounded-lg text-center font-mono tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                        errors.plat_nomor ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                      }`}
+                    />
+                    <p className="text-[11px] text-gray-400 text-center mt-1">Nomor</p>
+                  </div>
+                  <div>
+                    <input
+                      type="text"
+                      value={plat.seri}
+                      onChange={handlePlatSeri}
+                      required
+                      placeholder="XYZ"
+                      maxLength={3}
+                      className={`w-full px-3 py-2 border rounded-lg text-center font-mono uppercase tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                        errors.plat_nomor ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                      }`}
+                    />
+                    <p className="text-[11px] text-gray-400 text-center mt-1">Seri</p>
+                  </div>
+                </div>
+                {errors.plat_nomor ? (
+                  <p className="text-red-600 text-xs mt-1">{errors.plat_nomor}</p>
+                ) : (
+                  <p className="text-gray-400 text-xs mt-1">
+                    Format: 1-2 huruf wilayah, 1-4 angka, 1-3 huruf seri. Contoh: B 1234 XYZ
+                  </p>
+                )}
               </div>
 
               {/* Kelas & Kapasitas */}
@@ -453,7 +566,7 @@ export default function Armada({ auth, armada, filters }) {
                 </select>
               </div>
 
-              {/* ✅ TAMBAH: Firebase Bus ID */}
+              {/* Firebase Bus ID */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Firebase Bus ID
@@ -462,7 +575,12 @@ export default function Armada({ auth, armada, filters }) {
                 <input
                   type="text"
                   value={formData.firebase_bus_id}
-                  onChange={(e) => setFormData({ ...formData, firebase_bus_id: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      firebase_bus_id: e.target.value.replace(/\s+/g, '-'),
+                    })
+                  }
                   placeholder="Contoh: STJ-Express-01"
                   className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm ${
                     errors.firebase_bus_id ? 'border-red-400 bg-red-50' : 'border-gray-300'
@@ -472,7 +590,7 @@ export default function Armada({ auth, armada, filters }) {
                   <p className="text-red-600 text-xs mt-1">{errors.firebase_bus_id}</p>
                 ) : (
                   <p className="text-gray-400 text-xs mt-1">
-                    ID unik untuk integrasi Firebase Realtime Database. Gunakan format tanpa spasi, contoh: <span className="font-mono">STJ-Express-01</span>
+                    ID unik untuk integrasi Firebase Realtime Database. Hanya huruf, angka, - dan _, contoh: <span className="font-mono">STJ-Express-01</span>
                   </p>
                 )}
               </div>

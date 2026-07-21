@@ -108,7 +108,7 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
   const pickModeRef = useRef(null); // selalu sinkron dengan state pickMode, dipakai di dalam closure listener
 
   // ───────────────────────────────────────────────────────────────────
-  // FIX UTAMA: saat modal dibuka untuk EDIT, formData.kota_asal &
+  // FIX UTAMA (lama): saat modal dibuka untuk EDIT, formData.kota_asal &
   // kota_tujuan sudah terisi data lama. Tanpa flag ini, useEffect
   // auto-calculate route akan langsung jalan dan MENIMPA rute lama
   // dengan hasil Directions API yang baru (bisa beda jalur/jarak dari
@@ -117,6 +117,27 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
   // dilakukan manual di initializeMap() dari track_coordinates.
   // ───────────────────────────────────────────────────────────────────
   const skipNextAutoCalcRef = useRef(false);
+
+  // ───────────────────────────────────────────────────────────────────
+  // FIX BARU: mencegah initializeMap() dipanggil ulang berkali-kali
+  // selama satu sesi modal terbuka.
+  //
+  // Root cause bug "jalur/polyline tidak muncul, peta balik ke default
+  // zoom Jawa Timur": initializeMap sebelumnya punya dependency ke
+  // drawSavedTrack, yang punya dependency ke formData.track_coordinates.
+  // Begitu calculateMultipleRoutes() berhasil dan memanggil
+  // updateFormDataFromRoute() (yang mengubah track_coordinates),
+  // identitas fungsi drawSavedTrack berubah -> identitas initializeMap
+  // ikut berubah -> useEffect yang bergantung pada initializeMap
+  // terpicu ulang -> `new google.maps.Map(...)` dibuat LAGI dengan
+  // center/zoom default -> polyline & fitBounds yang baru saja
+  // dipasang ada di map instance LAMA yang sudah dibuang.
+  //
+  // Dengan flag ref ini, peta hanya benar-benar diinisialisasi SEKALI
+  // per sesi modal terbuka. Direset ke false saat modal ditutup supaya
+  // sesi berikutnya bisa init peta lagi dari awal.
+  // ───────────────────────────────────────────────────────────────────
+  const mapInitializedRef = useRef(false);
 
   const { isLoaded: mapsLoaded, loadError } = useGoogleMaps(googleMapsApiKey);
   usePacContainerFix();
@@ -199,6 +220,14 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
   // Gambar ulang rute yang SUDAH TERSIMPAN (dipakai saat mode edit):
   // parse track_coordinates -> polyline + marker A/B di titik awal/akhir
   // -> fitBounds, TANPA memanggil Directions API sama sekali.
+  //
+  // CATATAN: fungsi ini sengaja TIDAK dimasukkan ke dependency array
+  // initializeMap (lihat penjelasan di mapInitializedRef di atas).
+  // Karena drawSavedTrack hanya dipanggil SEKALI, tepat di dalam
+  // initializeMap saat peta pertama kali dibuat untuk sesi modal edit,
+  // closure yang "agak basi" di sini tidak masalah — pada saat itu
+  // formData.track_coordinates memang masih berisi data lama yang benar
+  // (belum sempat diubah oleh proses apapun).
   // ───────────────────────────────────────────────────────────────────
   const drawSavedTrack = useCallback((map) => {
     if (!formData.track_coordinates) return false;
@@ -244,11 +273,13 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
   const initializeMap = useCallback(() => {
     if (!mapsLoaded || !window.google || !mapContainerRef.current) return;
 
-    try {
-      if (mapRef.current) {
-        mapRef.current = null;
-      }
+    // FIX: jangan buat map instance baru kalau sudah pernah dibuat
+    // untuk sesi modal yang sedang terbuka ini. Ini mencegah race
+    // condition yang membuat polyline hasil calculateMultipleRoutes
+    // "hilang" karena map instance-nya keburu diganti.
+    if (mapInitializedRef.current) return;
 
+    try {
       const map = new window.google.maps.Map(mapContainerRef.current, {
         center: { lat: -7.629, lng: 111.523 },
         zoom: 9,
@@ -258,6 +289,7 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
       });
 
       mapRef.current = map;
+      mapInitializedRef.current = true;
       directionsServiceRef.current = new window.google.maps.DirectionsService();
       geocoderRef.current = new window.google.maps.Geocoder();
 
@@ -327,7 +359,12 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
     } catch (error) {
       console.error('Error initializing map:', error);
     }
-  }, [mapsLoaded, placeMarker, editMode, drawSavedTrack]);
+    // FIX: drawSavedTrack sengaja DIHAPUS dari dependency array.
+    // initializeMap sekarang hanya bergantung pada hal-hal yang stabil
+    // selama satu sesi modal terbuka (mapsLoaded, placeMarker, editMode),
+    // sehingga identitasnya tidak berubah-ubah dan useEffect di bawah
+    // tidak ter-trigger ulang setiap kali formData berubah.
+  }, [mapsLoaded, placeMarker, editMode]);
 
   // Initialize map when modal opens
   useEffect(() => {
@@ -354,167 +391,133 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.kota_asal, formData.kota_tujuan, mapsLoaded]);
 
-  // Calculate Multiple Routes (Via Tol & Non-Tol)
-  const calculateMultipleRoutes = useCallback(() => {
-    if (!formData.kota_asal || !formData.kota_tujuan || !directionsServiceRef.current || !mapRef.current) {
+  // Token untuk menandai request Directions API mana yang PALING BARU.
+// Kalau ada 2 pemanggilan calculateMultipleRoutes yang overlap (misal
+// karena efek ter-trigger dobel), hanya hasil dari request dengan token
+// TERBARU yang boleh menyentuh peta. Request yang sudah "basi" (stale)
+// akan diabaikan total — tidak menghapus polyline, tidak fitBounds,
+// tidak alert. Ini mencegah bug: polyline hasil request pertama sudah
+// tergambar benar, lalu tiba-tiba dihapus oleh request kedua yang
+// kebetulan gagal/kosong, sehingga track terlihat "muncul lalu hilang
+// mendadak" dan peta seperti reset.
+const calcRequestIdRef = useRef(0);
+
+// Calculate Multiple Routes (Via Tol & Non-Tol)
+const calculateMultipleRoutes = useCallback(() => {
+  if (!formData.kota_asal || !formData.kota_tujuan || !directionsServiceRef.current || !mapRef.current) {
+    return;
+  }
+
+  // Tandai pemanggilan ini sebagai yang paling baru
+  const myRequestId = ++calcRequestIdRef.current;
+
+  setIsCalculating(true);
+
+  // CATATAN: polyline lama TIDAK dihapus di sini lagi. Penghapusan
+  // dipindah ke processResults(), tepat sebelum polyline baru digambar,
+  // supaya kalau request ini ternyata basi (ada request lebih baru
+  // yang menyusul), kita tidak sempat menghapus apapun dari peta.
+
+  const allRoutes = [];
+  let completedRequests = 0;
+
+  const requestWithTolls = {
+    origin: formData.kota_asal,
+    destination: formData.kota_tujuan,
+    travelMode: window.google.maps.TravelMode.DRIVING,
+    provideRouteAlternatives: true,
+  };
+
+  const requestWithoutTolls = {
+    origin: formData.kota_asal,
+    destination: formData.kota_tujuan,
+    travelMode: window.google.maps.TravelMode.DRIVING,
+    avoidTolls: true,
+    provideRouteAlternatives: false,
+  };
+
+  const processResults = () => {
+    if (completedRequests !== 2) return;
+
+    // Request ini sudah basi (sudah ada calculateMultipleRoutes yang
+    // dipanggil setelahnya) -> abaikan total, jangan sentuh peta/state.
+    if (myRequestId !== calcRequestIdRef.current) return;
+
+    setIsCalculating(false);
+
+    if (allRoutes.length === 0) {
+      alert('Tidak dapat menghitung rute');
+      setAvailableRoutes([]);
       return;
     }
 
-    setIsCalculating(true);
+    const uniqueRoutes = [];
+    allRoutes.forEach(route => {
+      const isDuplicate = uniqueRoutes.some(existing => {
+        const existingDistance = existing.legs.reduce((sum, leg) => sum + leg.distance.value, 0);
+        const routeDistance = route.legs.reduce((sum, leg) => sum + leg.distance.value, 0);
+        return Math.abs(existingDistance - routeDistance) < 100;
+      });
+      if (!isDuplicate) {
+        uniqueRoutes.push(route);
+      }
+    });
 
-    // Clear previous polylines
+    setAvailableRoutes(uniqueRoutes);
+    setSelectedRouteIndex(0);
+
+    // Baru sekarang hapus polyline lama — tepat sebelum menggambar yang
+    // baru, jadi tidak pernah ada jeda "kosong" yang terlihat user.
     polylineRefs.current.forEach(polyline => polyline.setMap(null));
     polylineRefs.current = [];
 
-    const allRoutes = [];
-    let completedRequests = 0;
+    uniqueRoutes.forEach((route, index) => {
+      const path = route.overview_path;
 
-    // Request 1: Route with tolls (default)
-    const requestWithTolls = {
-      origin: formData.kota_asal,
-      destination: formData.kota_tujuan,
-      travelMode: window.google.maps.TravelMode.DRIVING,
-      provideRouteAlternatives: true,
-    };
-
-    // Request 2: Route without tolls
-    const requestWithoutTolls = {
-      origin: formData.kota_asal,
-      destination: formData.kota_tujuan,
-      travelMode: window.google.maps.TravelMode.DRIVING,
-      avoidTolls: true,
-      provideRouteAlternatives: false,
-    };
-
-    const processResults = () => {
-      if (completedRequests === 2) {
-        setIsCalculating(false);
-
-        if (allRoutes.length === 0) {
-          alert('Tidak dapat menghitung rute');
-          setAvailableRoutes([]);
-          return;
-        }
-
-        // Remove duplicate routes (same distance)
-        const uniqueRoutes = [];
-        allRoutes.forEach(route => {
-          const isDuplicate = uniqueRoutes.some(existing => {
-            const existingDistance = existing.legs.reduce((sum, leg) => sum + leg.distance.value, 0);
-            const routeDistance = route.legs.reduce((sum, leg) => sum + leg.distance.value, 0);
-            return Math.abs(existingDistance - routeDistance) < 100;
-          });
-          if (!isDuplicate) {
-            uniqueRoutes.push(route);
-          }
-        });
-
-        setAvailableRoutes(uniqueRoutes);
-        setSelectedRouteIndex(0);
-
-        // Render each unique route as polyline
-        uniqueRoutes.forEach((route, index) => {
-          const path = route.overview_path;
-
-          const polyline = new window.google.maps.Polyline({
-            path: path,
-            geodesic: true,
-            strokeColor: index === 0 ? '#1E40AF' : '#93C5FD',
-            strokeOpacity: index === 0 ? 0.8 : 0.5,
-            strokeWeight: index === 0 ? 6 : 4,
-            map: mapRef.current,
-          });
-
-          // Add click listener
-          polyline.addListener('click', () => {
-            selectRoute(index);
-          });
-
-          polylineRefs.current.push(polyline);
-        });
-
-        // Fit bounds to show all routes
-        const bounds = new window.google.maps.LatLngBounds();
-        uniqueRoutes[0].overview_path.forEach(point => {
-          bounds.extend(point);
-        });
-        mapRef.current.fitBounds(bounds);
-
-        // Set first route data as default
-        updateFormDataFromRoute(uniqueRoutes[0]);
-      }
-    };
-
-    // Execute request with tolls
-    directionsServiceRef.current.route(requestWithTolls, (result, status) => {
-      if (status === 'OK' && result) {
-        result.routes.slice(0, 2).forEach(route => {
-          allRoutes.push({ ...route, routeType: 'via_tol' });
-        });
-      }
-      completedRequests++;
-      processResults();
-    });
-
-    // Execute request without tolls
-    directionsServiceRef.current.route(requestWithoutTolls, (result, status) => {
-      if (status === 'OK' && result) {
-        allRoutes.push({ ...result.routes[0], routeType: 'non_tol' });
-      }
-      completedRequests++;
-      processResults();
-    });
-
-  }, [formData.kota_asal, formData.kota_tujuan]);
-
-  // Select a route
-  const selectRoute = useCallback((index) => {
-    if (index < 0 || index >= availableRoutes.length) return;
-
-    setSelectedRouteIndex(index);
-
-    // Update polyline styles
-    polylineRefs.current.forEach((polyline, i) => {
-      polyline.setOptions({
-        strokeColor: i === index ? '#1E40AF' : '#93C5FD',
-        strokeWeight: i === index ? 6 : 4,
-        strokeOpacity: i === index ? 0.8 : 0.5,
+      const polyline = new window.google.maps.Polyline({
+        path: path,
+        geodesic: true,
+        strokeColor: index === 0 ? '#1E40AF' : '#93C5FD',
+        strokeOpacity: index === 0 ? 0.8 : 0.5,
+        strokeWeight: index === 0 ? 6 : 4,
+        map: mapRef.current,
       });
+
+      polyline.addListener('click', () => {
+        selectRoute(index);
+      });
+
+      polylineRefs.current.push(polyline);
     });
 
-    // Update form data with selected route
-    updateFormDataFromRoute(availableRoutes[index]);
-  }, [availableRoutes]);
-
-  // Update form data from selected route
-  const updateFormDataFromRoute = useCallback((route) => {
-    const legs = route.legs;
-
-    let totalDistance = 0;
-    let totalDuration = 0;
-    legs.forEach(leg => {
-      totalDistance += leg.distance.value;
-      totalDuration += leg.duration.value;
+    const bounds = new window.google.maps.LatLngBounds();
+    uniqueRoutes[0].overview_path.forEach(point => {
+      bounds.extend(point);
     });
+    mapRef.current.fitBounds(bounds);
 
-    const polyline = route.overview_polyline;
-    const jarak = (totalDistance / 1000).toFixed(2);
-    const estimasiWaktu = Math.round(totalDuration / 60);
+    updateFormDataFromRoute(uniqueRoutes[0]);
+  };
 
-    const path = route.overview_path;
-    const trackCoordinates = path.map(point => ({
-      lat: point.lat(),
-      lng: point.lng(),
-    }));
+  directionsServiceRef.current.route(requestWithTolls, (result, status) => {
+    if (status === 'OK' && result) {
+      result.routes.slice(0, 2).forEach(route => {
+        allRoutes.push({ ...route, routeType: 'via_tol' });
+      });
+    }
+    completedRequests++;
+    processResults();
+  });
 
-    setFormData(prev => ({
-      ...prev,
-      polyline: polyline,
-      track_coordinates: JSON.stringify(trackCoordinates),
-      jarak: jarak,
-      estimasi_waktu: estimasiWaktu,
-    }));
-  }, []);
+  directionsServiceRef.current.route(requestWithoutTolls, (result, status) => {
+    if (status === 'OK' && result) {
+      allRoutes.push({ ...result.routes[0], routeType: 'non_tol' });
+    }
+    completedRequests++;
+    processResults();
+  });
+
+}, [formData.kota_asal, formData.kota_tujuan]);
 
   // Bersihkan marker asal/tujuan dari peta
   const clearMarkers = () => {
@@ -587,6 +590,9 @@ export default function Rute({ auth, rute, filters, googleMapsApiKey }) {
     }
 
     mapRef.current = null;
+    // FIX: reset flag supaya sesi modal berikutnya bisa initializeMap()
+    // lagi dari awal (membuat map instance baru yang bersih).
+    mapInitializedRef.current = false;
     setAvailableRoutes([]);
     setSelectedRouteIndex(0);
     setPickMode(null);
