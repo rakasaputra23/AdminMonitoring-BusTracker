@@ -11,15 +11,42 @@ export default function Kru({ auth, kru, filters }) {
   const [errors, setErrors]                   = useState({});
   const [showPassword, setShowPassword]       = useState(false);
 
-  const [formData, setFormData] = useState({
+  const emptyForm = {
     driver   : '',
     username : '',
     password : '',
     status   : 'aktif',
-  });
+  };
+
+  const [formData, setFormData] = useState(emptyForm);
 
   const [searchTerm, setSearchTerm]     = useState(filters?.search || '');
   const [statusFilter, setStatusFilter] = useState(filters?.status || '');
+
+  // ── Validasi frontend (mirror validasi backend) ──────────────────
+
+  const DRIVER_REGEX   = /^[a-zA-Z\s.']+$/;
+  const USERNAME_REGEX = /^[a-z0-9_]+$/;
+
+  const getDriverError = (val) => {
+    if (!val.trim()) return 'Nama driver wajib diisi';
+    if (val.trim().length < 3) return 'Nama driver minimal 3 karakter';
+    if (!DRIVER_REGEX.test(val)) return 'Nama driver hanya boleh berisi huruf dan spasi';
+    return null;
+  };
+
+  const getUsernameError = (val) => {
+    if (!val) return 'Username wajib diisi';
+    if (val.length < 4) return 'Username minimal 4 karakter';
+    if (!USERNAME_REGEX.test(val)) return 'Hanya huruf kecil, angka, dan underscore (_), tanpa spasi';
+    return null;
+  };
+
+  const getPasswordError = (val) => {
+    if (!editMode && !val) return 'Password wajib diisi';
+    if (val && val.length < 6) return 'Password minimal 6 karakter';
+    return null;
+  };
 
   // ── Modal ──────────────────────────────────────────────────────────
 
@@ -33,7 +60,7 @@ export default function Kru({ auth, kru, filters }) {
     } else {
       setEditMode(false);
       setCurrentKru(null);
-      setFormData({ driver: '', username: '', password: '', status: 'aktif' });
+      setFormData(emptyForm);
     }
     setShowModal(true);
   };
@@ -44,20 +71,54 @@ export default function Kru({ auth, kru, filters }) {
     setCurrentKru(null);
     setErrors({});
     setShowPassword(false);
-    setFormData({ driver: '', username: '', password: '', status: 'aktif' });
+    setFormData(emptyForm);
+  };
+
+  // ── Input handlers ─────────────────────────────────────────────────
+
+  const handleDriverChange = (e) => {
+    // biarkan huruf, spasi, titik, apostrof saja saat mengetik
+    const val = e.target.value.replace(/[^a-zA-Z\s.']/g, '');
+    setFormData((prev) => ({ ...prev, driver: val }));
+  };
+
+  const handleUsernameChange = (e) => {
+    // otomatis lowercase, hanya huruf/angka/underscore, tanpa spasi
+    const val = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    setFormData((prev) => ({ ...prev, username: val }));
   };
 
   // ── Submit ─────────────────────────────────────────────────────────
 
   const handleSubmit = (e) => {
     e.preventDefault();
+
+    const driverError   = getDriverError(formData.driver);
+    const usernameError = getUsernameError(formData.username);
+    const passwordError = getPasswordError(formData.password);
+
+    if (driverError || usernameError || passwordError) {
+      setErrors({
+        ...(driverError   ? { driver: driverError }     : {}),
+        ...(usernameError ? { username: usernameError } : {}),
+        ...(passwordError ? { password: passwordError } : {}),
+      });
+      return;
+    }
+
+    // Jangan kirim field password kosong saat edit (biar backend tidak menganggap ada perubahan)
+    const payload = { ...formData };
+    if (editMode && !payload.password) {
+      delete payload.password;
+    }
+
     if (editMode && currentKru) {
-      router.put(`/data-master/kru/${currentKru.id}`, formData, {
+      router.put(`/data-master/kru/${currentKru.id}`, payload, {
         onSuccess : () => handleCloseModal(),
         onError   : (errs) => setErrors(errs),
       });
     } else {
-      router.post('/data-master/kru', formData, {
+      router.post('/data-master/kru', payload, {
         onSuccess : () => handleCloseModal(),
         onError   : (errs) => setErrors(errs),
       });
@@ -302,14 +363,19 @@ export default function Kru({ auth, kru, filters }) {
                 <input
                   type="text"
                   value={formData.driver}
-                  onChange={(e) => setFormData({ ...formData, driver: e.target.value })}
+                  onChange={handleDriverChange}
                   required
+                  minLength={3}
                   placeholder="Contoh: Budi Santoso"
                   className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                     errors.driver ? 'border-red-400 bg-red-50' : 'border-gray-300'
                   }`}
                 />
-                {errors.driver && <p className="text-red-600 text-xs mt-1">{errors.driver}</p>}
+                {errors.driver ? (
+                  <p className="text-red-600 text-xs mt-1">{errors.driver}</p>
+                ) : (
+                  <p className="text-gray-400 text-xs mt-1">Hanya huruf dan spasi, minimal 3 karakter</p>
+                )}
               </div>
 
               {/* Username */}
@@ -320,14 +386,19 @@ export default function Kru({ auth, kru, filters }) {
                 <input
                   type="text"
                   value={formData.username}
-                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  onChange={handleUsernameChange}
                   required
+                  minLength={4}
                   placeholder="Contoh: budi123"
-                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                  className={`w-full px-4 py-2 border rounded-lg font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                     errors.username ? 'border-red-400 bg-red-50' : 'border-gray-300'
                   }`}
                 />
-                {errors.username && <p className="text-red-600 text-xs mt-1">{errors.username}</p>}
+                {errors.username ? (
+                  <p className="text-red-600 text-xs mt-1">{errors.username}</p>
+                ) : (
+                  <p className="text-gray-400 text-xs mt-1">Huruf kecil, angka, underscore (_) saja, tanpa spasi, minimal 4 karakter</p>
+                )}
               </div>
 
               {/* Password */}
@@ -345,6 +416,7 @@ export default function Kru({ auth, kru, filters }) {
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     required={!editMode}
+                    minLength={6}
                     placeholder="Minimal 6 karakter"
                     className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                       errors.password ? 'border-red-400 bg-red-50' : 'border-gray-300'
