@@ -374,7 +374,7 @@ class KruController extends Controller
     {
         $perjalanan = Perjalanan::where('kru_id', $request->user()->id)
             ->where('status', 'aktif')
-            ->with(['armada', 'rute'])
+            ->with(['armada', 'rute', 'kru']) // ✅ tambahkan 'kru' di sini
             ->first();
 
         if (!$perjalanan) {
