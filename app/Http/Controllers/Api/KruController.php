@@ -414,9 +414,52 @@ class KruController extends Controller
     }
 
     /**
+     * ✅ BARU — GET PERJALANAN BY ID (bukan by kru_id login)
+     * GET /api/kru/perjalanan/{id}
+     *
+     * Dipakai saat device SUDAH menyimpan perjalanId lokal (SharedPref) —
+     * artinya trip ini sedang berjalan di HP ini, siapa pun driver
+     * terakhirnya. Beda dengan getPerjalananAktif() yang query "trip milik
+     * kru yang sedang login" — endpoint itu salah dipakai untuk kasus resume
+     * setelah ganti driver, karena kru_id di database sudah berubah.
+     *
+     * Tidak filter kru_id sama sekali — cukup token valid (auth:sanctum)
+     * + id yang diminta memang ada.
+     */
+    public function getPerjalananById(Request $request, $id)
+    {
+        $perjalanan = Perjalanan::where('id', $id)
+            ->with(['armada', 'rute', 'kru'])
+            ->first();
+
+        if (!$perjalanan) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Perjalanan tidak ditemukan',
+                'data'    => null,
+            ], 404);
+        }
+
+        if ($perjalanan->status !== 'aktif') {
+            return response()->json([
+                'success' => true,
+                'message' => 'Perjalanan sudah selesai',
+                'data'    => null,
+            ], 200);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Data perjalanan',
+            'data'    => $perjalanan,
+        ], 200);
+    }
+
+    /**
      * LIST KRU AKTIF (untuk dropdown ganti driver)
      * GET /api/kru/list
      */
+
     public function listKru()
     {
         $daftarKru = Kru::where('status', 'aktif')
@@ -497,4 +540,4 @@ class KruController extends Controller
             'message' => 'Logout berhasil',
         ], 200);
     }
-}   
+}
