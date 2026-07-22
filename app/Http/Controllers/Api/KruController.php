@@ -393,6 +393,73 @@ class KruController extends Controller
     }
 
     /**
+     * LIST KRU AKTIF (untuk dropdown ganti driver)
+     * GET /api/kru/list
+     */
+    public function listKru()
+    {
+        $daftarKru = Kru::where('status', 'aktif')
+            ->select('id', 'driver', 'username', 'status') // tanpa password, aman
+            ->orderBy('driver')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Daftar kru berhasil diambil',
+            'data'    => $daftarKru,
+        ], 200);
+    }
+
+    /**
+     * GANTI DRIVER PADA PERJALANAN AKTIF
+     * POST /api/kru/perjalanan/ganti-driver
+     */
+    public function gantiDriver(Request $request)
+    {
+        $request->validate([
+            'perjalanan_id' => 'required|exists:perjalanan,id',
+            'kru_id_baru'   => 'required|exists:kru,id',
+        ]);
+
+        // Hanya kru yang sedang jadi driver aktif di perjalanan ini yang boleh ganti
+        $perjalanan = Perjalanan::where('id', $request->perjalanan_id)
+            ->where('kru_id', $request->user()->id)
+            ->where('status', 'aktif')
+            ->with('armada')
+            ->first();
+
+        if (!$perjalanan) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Perjalanan tidak ditemukan, sudah selesai, atau bukan milik Anda',
+            ], 404);
+        }
+
+        $kruBaru = Kru::where('status', 'aktif')->find($request->kru_id_baru);
+
+        if (!$kruBaru) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kru pengganti tidak ditemukan atau tidak aktif',
+            ], 404);
+        }
+
+        $perjalanan->update(['kru_id' => $kruBaru->id]);
+        $perjalanan->load(['kru', 'armada', 'rute']); // ✅ password sudah aman karena $hidden di model Kru
+
+        return response()->json([
+            'success' => true,
+            'message' => "Driver berhasil diganti ke {$kruBaru->driver}",
+            'data'    => [
+                'perjalanan'      => $perjalanan,
+                'firebase_bus_id' => $perjalanan->armada->firebase_bus_id,
+                'driver_baru'     => $kruBaru->driver,
+                'kru_id_baru'     => $kruBaru->id,
+            ],
+        ], 200);
+    }
+
+    /**
      * LOGOUT
      * POST /api/kru/logout
      */

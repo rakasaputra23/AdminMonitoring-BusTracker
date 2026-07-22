@@ -22,12 +22,14 @@ Route::middleware('auth:sanctum')->prefix('kru')->group(function () {
     // Get Master Data
     Route::get('/armada', [KruController::class, 'getArmada']);
     Route::get('/rute', [KruController::class, 'getRute']);
+    Route::get('/list', [KruController::class, 'listKru']); // ✅ BARU
     
     // Perjalanan Management
     Route::post('/perjalanan/mulai', [KruController::class, 'mulaiPerjalanan']);
     Route::post('/perjalanan/kondisi', [KruController::class, 'updateKondisi']);
     Route::post('/perjalanan/penumpang', [KruController::class, 'updatePenumpang']);
     Route::post('/perjalanan/selesai', [KruController::class, 'selesaiPerjalanan']);
+    Route::post('/perjalanan/ganti-driver', [KruController::class, 'gantiDriver']); // ✅ BARU
     Route::get('/perjalanan/aktif', [KruController::class, 'getPerjalananAktif']);
     
     // Logout
