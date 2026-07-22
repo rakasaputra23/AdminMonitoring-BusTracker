@@ -171,6 +171,11 @@ class KruController extends Controller
     /**
      * MULAI PERJALANAN
      * POST /api/kru/perjalanan/mulai
+     *
+     * Catatan: mulaiPerjalanan tetap dicek terhadap kru_id = auth()->id() —
+     * ini bukan bagian dari perjalanan yang sudah berjalan (belum ada
+     * "kru saat ini" untuk dioper), jadi validasi "kru ini belum punya
+     * perjalanan aktif lain" tetap masuk akal berbasis token pemanggil.
      */
     public function mulaiPerjalanan(Request $request)
     {
@@ -222,6 +227,10 @@ class KruController extends Controller
     /**
      * UPDATE KONDISI
      * POST /api/kru/perjalanan/kondisi
+     *
+     * ✅ FIX: filter kru_id = auth()->id() dihapus. Device (HP) bisa dipegang
+     * kru manapun setelah ganti driver — otorisasi cukup: token kru valid
+     * (middleware auth:sanctum) + perjalanan_id tersebut masih berstatus aktif.
      */
     public function updateKondisi(Request $request)
     {
@@ -231,7 +240,6 @@ class KruController extends Controller
         ]);
 
         $perjalanan = Perjalanan::where('id', $request->perjalanan_id)
-            ->where('kru_id', $request->user()->id)
             ->where('status', 'aktif')
             ->first();
 
@@ -254,6 +262,8 @@ class KruController extends Controller
     /**
      * UPDATE PENUMPANG
      * POST /api/kru/perjalanan/penumpang
+     *
+     * ✅ FIX: filter kru_id = auth()->id() dihapus (lihat catatan di updateKondisi).
      */
     public function updatePenumpang(Request $request)
     {
@@ -263,7 +273,6 @@ class KruController extends Controller
         ]);
 
         $perjalanan = Perjalanan::where('id', $request->perjalanan_id)
-            ->where('kru_id', $request->user()->id)
             ->where('status', 'aktif')
             ->first();
 
@@ -287,8 +296,13 @@ class KruController extends Controller
      * SELESAI PERJALANAN
      * POST /api/kru/perjalanan/selesai
      *
-     * ✅ NEW: Tarik gps_track dari Firebase RTDB → simpan ke MySQL
-     *        sebelum node track dihapus dari Firebase
+     * ✅ FIX: filter kru_id = auth()->id() dihapus (lihat catatan di updateKondisi).
+     *        Hasil akhir (relasi 'kru' yang di-load di bawah) otomatis mengikuti
+     *        kru_id TERKINI pada baris perjalanan itu — yaitu kru terakhir yang
+     *        menjadi driver, sesuai kebutuhan "hasil kru yang terakhir".
+     *
+     * ✅ Tarik gps_track dari Firebase RTDB → simpan ke MySQL
+     *    sebelum node track dihapus dari Firebase
      */
     public function selesaiPerjalanan(Request $request)
     {
@@ -301,7 +315,6 @@ class KruController extends Controller
         ]);
 
         $perjalanan = Perjalanan::where('id', $request->perjalanan_id)
-            ->where('kru_id', $request->user()->id)
             ->where('status', 'aktif')
             ->with('armada')
             ->first();
@@ -369,12 +382,20 @@ class KruController extends Controller
     /**
      * GET PERJALANAN AKTIF
      * GET /api/kru/perjalanan/aktif
+     *
+     * Catatan: endpoint ini TETAP pakai kru_id = auth()->id() karena
+     * fungsinya berbeda — "perjalanan aktif milik kru yang sedang login ini".
+     * Setelah ganti driver, kru LAMA (misal raka) tidak lagi punya
+     * perjalanan aktif atas namanya sendiri di query ini — itu perilaku
+     * yang benar untuk endpoint ini, bukan bug. Endpoint aksi (kondisi,
+     * penumpang, selesai, ganti-driver) yang perlu dilepas dari kru_id,
+     * bukan endpoint read-status-milik-sendiri ini.
      */
     public function getPerjalananAktif(Request $request)
     {
         $perjalanan = Perjalanan::where('kru_id', $request->user()->id)
             ->where('status', 'aktif')
-            ->with(['armada', 'rute', 'kru']) // ✅ tambahkan 'kru' di sini
+            ->with(['armada', 'rute', 'kru'])
             ->first();
 
         if (!$perjalanan) {
@@ -413,6 +434,12 @@ class KruController extends Controller
     /**
      * GANTI DRIVER PADA PERJALANAN AKTIF
      * POST /api/kru/perjalanan/ganti-driver
+     *
+     * ✅ FIX: filter kru_id = auth()->id() dihapus. Kru mana pun yang sedang
+     * login di device ini boleh transfer driver pada perjalanan_id yang
+     * aktif — konsisten dengan updateKondisi/updatePenumpang/selesaiPerjalanan,
+     * supaya rantai ganti-driver berkali-kali dalam satu perjalanan tidak
+     * ke-block oleh token pemanggil yang sudah bukan driver aktif lagi.
      */
     public function gantiDriver(Request $request)
     {
@@ -421,9 +448,7 @@ class KruController extends Controller
             'kru_id_baru'   => 'required|exists:kru,id',
         ]);
 
-        // Hanya kru yang sedang jadi driver aktif di perjalanan ini yang boleh ganti
         $perjalanan = Perjalanan::where('id', $request->perjalanan_id)
-            ->where('kru_id', $request->user()->id)
             ->where('status', 'aktif')
             ->with('armada')
             ->first();
@@ -431,7 +456,7 @@ class KruController extends Controller
         if (!$perjalanan) {
             return response()->json([
                 'success' => false,
-                'message' => 'Perjalanan tidak ditemukan, sudah selesai, atau bukan milik Anda',
+                'message' => 'Perjalanan tidak ditemukan atau sudah selesai',
             ], 404);
         }
 
@@ -472,4 +497,4 @@ class KruController extends Controller
             'message' => 'Logout berhasil',
         ], 200);
     }
-}
+}   
